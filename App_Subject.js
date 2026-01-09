@@ -3,7 +3,9 @@
 // =========================
 function getSubjectMonthData(params) {
   const ss = SpreadsheetApp.openById(SS_ID);
-  const allData = getAllSheetData_(ss);
+  // 最適化: 必要なシートのみ指定して読み込み
+  const requiredSheets = ['students', 'timetable', 'subjects', 'calendar', 'attendance_subject'];
+  const allData = getAllSheetData_(ss, requiredSheets);
 
   const grade = String(params.grade);
   const className = String(params.className);

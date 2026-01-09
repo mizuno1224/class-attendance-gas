@@ -4,7 +4,9 @@
 
 function getHomeroomViewData(params) {
   const ss = SpreadsheetApp.openById(SS_ID);
-  const allData = getAllSheetData_(ss);
+  // 最適化: 必要なシートのみ指定して読み込み
+  const requiredSheets = ['students', 'timetable', 'subjects', 'calendar', 'attendance_hr'];
+  const allData = getAllSheetData_(ss, requiredSheets);
   return getHomeroomDataLogic_(allData, params.grade, params.className, Number(params.year), Number(params.month));
 }
 
