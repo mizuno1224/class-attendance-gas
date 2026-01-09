@@ -1,0 +1,1073 @@
+<script>
+    const TODAY = new Date();
+      const TODAY_STR = TODAY.toISOString().split('T')[0];
+
+      let currentTab = 'homeroom';
+      let initData = null; 
+      let hrData = null; 
+      let hrEdits = {}; 
+      let subjData = null;
+      let subjEdits = {};
+      let currentSubjId = null;
+      let calSettingsData = []; 
+      let calEdits = false;
+
+      let hrState = { year: TODAY.getFullYear(), month: TODAY.getMonth()+1, semesterIdx: -1 };
+      let subjState = { year: TODAY.getFullYear(), month: TODAY.getMonth()+1, semesterIdx: -1 };
+
+      function init() {
+        const ymStr = TODAY.getFullYear() + '-' + ('0'+(TODAY.getMonth()+1)).slice(-2);
+        document.getElementById('cal-setting-month').value = ymStr;
+
+        google.script.run.withSuccessHandler(data => {
+          initData = data;
+          
+          const y = data.initialDate.year;
+          const m = data.initialDate.month;
+          
+          const semIdx = findCurrentSemester(TODAY_STR);
+          hrState = { year:y, month:m, semesterIdx: semIdx };
+          subjState = { year:y, month:m, semesterIdx: semIdx };
+
+          renderSemesterButtons('hr-semester-btns', hrState, 'hr-month-tabs', loadHomeroom);
+          renderSemesterButtons('subj-semester-btns', subjState, 'subj-month-tabs', loadSubject);
+          document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', e => {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            e.target.classList.add('active');
+            currentTab = e.target.dataset.tab;
+            document.getElementById('tab-homeroom').style.display = currentTab==='homeroom'?'block':'none';
+            document.getElementById('tab-subject').style.display = currentTab==='subject'?'block':'none';
+            document.getElementById('tab-settings').style.display = currentTab==='settings'?'block':'none';
+            
+            if (currentTab === 'subject' && !subjData) {
+              triggerDefaultSubjLoad();
+            }
+            if (currentTab === 'settings') {
+              loadCalendarSettings();
+            }
+          }));
+          if (data.initialHrData) {
+            hrData = data.initialHrData;
+            updateMonthTabs('hr-month-tabs', hrState, loadHomeroom);
+            renderHomeroomTable();
+          } else {
+            updateMonthTabs('hr-month-tabs', hrState, loadHomeroom);
+            loadHomeroom();
+          }
+          
+          initSubjDropdowns();
+        }).getInitialData();
+
+        document.getElementById('hr-save-btn').addEventListener('click', saveHomeroom);
+        document.getElementById('subj-save-btn').addEventListener('click', saveSubject);
+        document.getElementById('cal-bulk-save-btn').addEventListener('click', saveCalendarBulk);
+        
+        document.getElementById('subj-grade').addEventListener('change', onSubjGradeChange);
+        document.getElementById('subj-class').addEventListener('change', onSubjClassChange);
+        document.getElementById('cal-setting-month').addEventListener('change', loadCalendarSettings);
+      }
+
+      function onFailure(e) {
+        alert('エラーが発生しました:\n' + e.message);
+        updateSaveBtnState();
+      }
+
+      function updateSaveBtnState() {
+        const hasHrDiff = Object.keys(hrEdits).length > 0;
+        const btnHr = document.getElementById('hr-save-btn');
+        btnHr.disabled = !hasHrDiff;
+        btnHr.textContent = '保存';
+
+        const hasSubjDiff = Object.keys(subjEdits).length > 0;
+        const btnSubj = document.getElementById('subj-save-btn');
+        btnSubj.disabled = !hasSubjDiff;
+        btnSubj.textContent = '保存';
+
+        const btnCal = document.getElementById('cal-bulk-save-btn');
+        btnCal.disabled = !calEdits;
+        btnCal.textContent = '一括保存';
+      }
+
+      // 欠課数警告判定 (units * 35 / 3 - 10)
+      function getWarningClass(count, units) {
+        if (!units) return '';
+        const limit = Math.floor(units * 35 / 3);
+        // 残り10回以下 = 現在欠課数 > (limit - 10)
+        if (count > limit - 10) return 'warn-high';
+        return '';
+      }
+
+      // --- Settings & Master Edit ---
+      
+      // マスタ定義 (列順序定義)
+      const MASTER_DEF = {
+        'students': ['grade', 'class', 'number', 'name'],
+        'timetable': ['grade', 'class', 'weekday', 'period', 'subjectId'],
+        'subjects': ['subjectId', 'subjectName'],
+        'semesters': ['semesterName', 'startDate', 'endDate'],
+        'teacher_config': ['type', 'grade', 'class', 'subjectId', 'subjectName']
+      };
+      let currentMasterSheet = '';
+      let currentMasterHeaders = [];
+      let currentMasterData = [];
+      function onSettingsModeChange() {
+        const mode = document.getElementById('settings-mode-select').value;
+        const isCal = (mode === 'calendar');
+        document.getElementById('settings-ui-calendar').style.display = isCal ? 'block' : 'none';
+        document.getElementById('cal-settings-table-wrapper').style.display = isCal ? 'block' : 'none';
+        
+        document.getElementById('settings-ui-master').style.display = !isCal ? 'block' : 'none';
+        
+        // TimeTableモードか否かで切り替え
+        const isTT = (mode === 'timetable');
+        document.getElementById('master-toolbar-generic').style.display = isTT ? 'none' : 'flex';
+        document.getElementById('master-toolbar-timetable').style.display = isTT ? 'flex' : 'none';
+        document.getElementById('master-table-wrapper').style.display = (!isCal && !isTT) ? 'block' : 'none';
+        document.getElementById('timetable-grid-wrapper').style.display = isTT ? 'block' : 'none';
+        if (isCal) {
+          loadCalendarSettings();
+        } else {
+          loadMaster(mode);
+        }
+      }
+
+      // --- Generic Master Logic ---
+      function loadMaster(sheetName) {
+        currentMasterSheet = sheetName;
+        const wrapper = (sheetName === 'timetable') ? 'timetable-grid-wrapper' : 'master-table-wrapper';
+        document.getElementById(wrapper).innerHTML = '<div style="padding:20px; text-align:center">Loading...</div>';
+        google.script.run
+        .withFailureHandler(e => {
+          document.getElementById(wrapper).innerHTML = '<div style="color:red; padding:20px;">読み込みエラー: ' + e.message + '</div>';
+        })
+        .withSuccessHandler(res => {
+          // 定義済みヘッダー順序を使用、なければ取得順
+          currentMasterHeaders = MASTER_DEF[sheetName] || res.headers;
+          currentMasterData = res.data; // 配列(Object)
+          
+          if(sheetName === 'timetable') {
+             renderTimetableUI();
+          } else {
+             renderMasterTable();
+          }
+        }).getMasterData(sheetName);
+      }
+
+      function renderMasterTable() {
+        try {
+          let h = `<table><thead><tr><th style="width:30px;">削除</th>`;
+          currentMasterHeaders.forEach(hd => {
+            h += `<th>${hd}</th>`;
+          });
+          h += '</tr></thead><tbody>';
+
+          currentMasterData.forEach((row, i) => {
+            h += `<tr>`;
+            h += `<td style="text-align:center;"><input type="checkbox" class="del-chk" value="${i}"></td>`;
+            
+            currentMasterHeaders.forEach(hd => {
+              let val = row[hd] !== undefined ? row[hd] : '';
+              let inputHtml = '';
+              
+              // 日付項目の判定と整形（ローカルタイムでYYYY-MM-DD変換）
+              const isDate = /date/i.test(hd);
+              if (isDate && val) {
+                 const d = new Date(val);
+                 if (!isNaN(d.getTime())) {
+                   const y = d.getFullYear();
+                   const m = ('0' + (d.getMonth() + 1)).slice(-2);
+                   const da = ('0' + d.getDate()).slice(-2);
+                   val = `${y}-${m}-${da}`;
+                 }
+              }
+
+              // 値のエスケープ処理（HTML崩れ防止）
+              const safeVal = String(val).replace(/"/g, '&quot;');
+
+              // 担当設定のtypeはセレクトボックスにする
+              if(currentMasterSheet === 'teacher_config' && hd === 'type') {
+                 inputHtml = `<select class="master-input" onchange="updateMasterData(${i}, '${hd}', this.value)">
+                   <option value="HR" ${val==='HR'?'selected':''}>HR</option>
+                   <option value="SUBJECT" ${val==='SUBJECT'?'selected':''}>SUBJECT</option>
+                 </select>`;
+              } else {
+                 const type = isDate ? 'date' : 'text';
+                 inputHtml = `<input type="${type}" class="master-input" value="${safeVal}" onchange="updateMasterData(${i}, '${hd}', this.value)">`;
+              }
+              h += `<td>${inputHtml}</td>`;
+            });
+            h += `</tr>`;
+          });
+          h += '</tbody></table>';
+          document.getElementById('master-table-wrapper').innerHTML = h;
+        } catch (e) {
+          console.error(e);
+          document.getElementById('master-table-wrapper').innerHTML = '<div style="color:red; padding:10px;">エラーが発生しました: ' + e.message + '</div>';
+        }
+      }
+
+      // --- TimeTable Grid Logic ---
+function renderTimetableUI() {
+        // クラス一覧を取得
+        const classes = new Set();
+        currentMasterData.forEach(r => {
+           if(r.grade && r.class) classes.add(`${r.grade}-${r.class}`);
+        });
+        const clsArr = Array.from(classes).sort();
+        
+        const sel = document.getElementById('tt-class-select');
+        sel.innerHTML = '<option disabled selected>クラスを選択</option>';
+        clsArr.forEach(c => {
+           const [g, cl] = c.split('-');
+           sel.innerHTML += `<option value="${g}-${cl}">${g}年${cl}組</option>`;
+        });
+        
+        // 科目リスト（datalist）の生成
+        let dl = '<datalist id="tt-subject-list">';
+        if (initData && initData.allSubjects) {
+          initData.allSubjects.forEach(s => {
+             dl += `<option value="${s.subjectId}">${s.subjectName}</option>`;
+          });
+        }
+        dl += '</datalist>';
+
+        document.getElementById('timetable-grid-wrapper').innerHTML = dl + '<div style="padding:10px; color:#666;">クラスを選択してください</div>';
+      }
+
+function renderTimetableGrid() {
+         const val = document.getElementById('tt-class-select').value;
+         if(!val) return;
+         const [g, c] = val.split('-');
+         
+         // 既存のdatalistを維持しつつGridを描画
+         const existingDl = document.getElementById('tt-subject-list');
+         const dlHtml = existingDl ? existingDl.outerHTML : '';
+         
+         const con = document.getElementById('timetable-grid-wrapper');
+         let html = dlHtml + '<div class="tt-grid">';
+         
+         const week = ['','月','火','水','木','金','土'];
+         // Header
+         week.forEach(w => html += `<div class="tt-cell tt-header">${w}</div>`);
+         // Rows 1-7
+         for(let p=1; p<=7; p++) {
+            html += `<div class="tt-cell tt-header">${p}</div>`;
+            // Period header
+            for(let d=1; d<=6; d++) {
+               // Find data
+               const rec = currentMasterData.find(r => String(r.grade)==String(g) && String(r.class)==String(c) && Number(r.weekday)==d && Number(r.period)==p);
+               const sub = rec ? rec.subjectId : '';
+               html += `<div class="tt-cell">
+                 <input type="text" class="tt-input" value="${sub}" placeholder="-" list="tt-subject-list"
+                   onchange="updateTimetableCell('${g}','${c}', ${d}, ${p}, this.value)">
+               </div>`;
+            }
+         }
+         html += '</div>';
+         html += '<div style="margin-top:8px; font-size:11px; color:#666;">※セルを選択して科目を選ぶか、直接入力してください</div>';
+         con.innerHTML = html;
+      }
+
+      window.updateTimetableCell = function(g, c, d, p, val) {
+         // 配列から検索
+         const idx = currentMasterData.findIndex(r => String(r.grade)==String(g) && String(r.class)==String(c) && Number(r.weekday)==d && Number(r.period)==p);
+         if(idx >= 0) {
+            if(val === '') {
+               // 削除
+               currentMasterData.splice(idx, 1);
+            } else {
+               // 更新
+               currentMasterData[idx].subjectId = val;
+            }
+         } else if(val !== '') {
+            // 追加
+            currentMasterData.push({grade:g, class:c, weekday:d, period:p, subjectId:val});
+         }
+      };
+
+      window.updateMasterData = function(idx, key, val) {
+        if(currentMasterData[idx]) {
+          currentMasterData[idx][key] = val;
+        }
+      };
+
+      window.addMasterRow = function() {
+        const newRow = {};
+        currentMasterHeaders.forEach(k => newRow[k] = '');
+        
+        // 便利機能：直前の行のgrade/classなどをコピーする（生徒名簿など）
+        if(currentMasterData.length > 0) {
+           const last = currentMasterData[currentMasterData.length - 1];
+           if(last.grade) newRow.grade = last.grade;
+           if(last.class) newRow.class = last.class;
+        }
+        
+        currentMasterData.push(newRow);
+        renderMasterTable();
+        const div = document.getElementById('master-table-wrapper');
+        setTimeout(() => div.scrollTop = div.scrollHeight, 50);
+      };
+      window.deleteMasterRows = function() {
+        const chks = document.querySelectorAll('.del-chk:checked');
+        if(chks.length === 0) return;
+        if(!confirm(`${chks.length}件削除しますか？`)) return;
+        
+        // 後ろから削除しないとインデックスがずれる
+        const idxs = Array.from(chks).map(c => Number(c.value)).sort((a,b) => b-a);
+        idxs.forEach(i => {
+          currentMasterData.splice(i, 1);
+        });
+        renderMasterTable();
+      };
+
+      window.saveMaster = function() {
+        const btn = (currentMasterSheet === 'timetable') 
+          ? document.getElementById('master-tt-save-btn') 
+          : document.getElementById('master-save-btn');
+        const origText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '保存中...';
+        
+        google.script.run.withSuccessHandler(() => {
+          alert('保存しました');
+          btn.disabled = false; btn.textContent = origText;
+          // リロードして反映
+          loadMaster(currentMasterSheet);
+        }).withFailureHandler(e => {
+          alert('Error: ' + e.message);
+          btn.disabled = false; btn.textContent = origText;
+        }).saveMasterData(currentMasterSheet, currentMasterHeaders, currentMasterData);
+      };
+
+      // --- Calendar Settings Logic ---
+      function loadCalendarSettings() {
+        const mode = document.getElementById('settings-mode-select').value;
+        if (mode !== 'calendar') return;
+
+        const val = document.getElementById('cal-setting-month').value;
+        if (!val) return;
+        const [y, m] = val.split('-').map(Number);
+        document.getElementById('cal-settings-table-wrapper').innerHTML = '<div style="padding:20px; text-align:center">Loading...</div>';
+        calEdits = false;
+        updateSaveBtnState();
+        google.script.run.withSuccessHandler(days => {
+          calSettingsData = days;
+          renderCalendarSettingsTable(days);
+        }).getCalendarSettingsViewData(y, m);
+      }
+
+      function renderCalendarSettingsTable(days) {
+        let h = `<table><thead>
+          <tr>
+            <th class="th-fixed-date">日付</th>
+            <th style="width:50px;">登校</th>
+            <th style="width:50px;">授業無</th>
+            <th>行事名</th>
+            <th style="min-width:160px;">有効時限</th>
+          </tr>
+        </thead><tbody>`;
+        days.forEach((d, i) => {
+          let trStyle = '';
+          if (d.date === TODAY_STR) trStyle = 'background:#fffbeb;';
+          else if (d.dow === 0) trStyle = 'background:#fee2e2;'; 
+          else if (d.dow === 6) trStyle = 'background:#dbeafe;'; 
+          
+          const dateLabel = `${parseInt(d.date.slice(-2))}(${['日','月','火','水','木','金','土'][d.dow]})`;
+           
+          // 時限ボタン生成
+          let periodBtns = '';
+          const vp = d.validPeriods || [];
+          const noVpDefined = !d.validPeriods || d.validPeriods.length === 0;
+          for(let p=1; p<=7; p++) {
+            const isActive = (noVpDefined && !d.isNoClassDay) || vp.includes(p);
+            periodBtns += `<div class="period-select-btn ${isActive?'active':''}" 
+              onclick="toggleCalPeriod(this, ${i})" data-p="${p}">${p}</div>`;
+          }
+
+          h += `<tr style="${trStyle}">
+            <td class="col-fixed-date" style="${trStyle}">${dateLabel}</td>
+            <td style="text-align:center;">
+              <input type="checkbox" class="settings-chk cal-chk-school" data-idx="${i}" ${d.isSchoolday?'checked':''} onchange="onCalRowChange(${i})">
+            </td>
+            <td style="text-align:center;">
+              <input type="checkbox" class="settings-chk cal-chk-noclass" data-idx="${i}" ${d.isNoClassDay?'checked':''} onchange="onCalRowChange(${i})">
+            </td>
+            <td>
+              <input type="text" class="settings-input cal-input-remark" data-idx="${i}" value="${d.remark||''}" oninput="onCalEdit()">
+            </td>
+            <td id="cal-periods-${i}">
+              ${periodBtns}
+            </td>
+          </tr>`;
+        });
+        h += '</tbody></table>';
+        document.getElementById('cal-settings-table-wrapper').innerHTML = h;
+      }
+
+      window.onCalEdit = function() {
+        calEdits = true;
+        updateSaveBtnState();
+      };
+
+      window.onCalRowChange = function(idx) {
+        const chkSchool = document.querySelector(`.cal-chk-school[data-idx="${idx}"]`);
+        const chkNoClass = document.querySelector(`.cal-chk-noclass[data-idx="${idx}"]`);
+        
+        if ((chkSchool && !chkSchool.checked) || (chkNoClass && chkNoClass.checked)) {
+          const container = document.getElementById(`cal-periods-${idx}`);
+          if (container) {
+             container.querySelectorAll('.period-select-btn').forEach(b => b.classList.remove('active'));
+          }
+        }
+        onCalEdit();
+      };
+      window.toggleCalPeriod = function(el, idx) {
+        el.classList.toggle('active');
+        if (el.classList.contains('active')) {
+          const chkSchool = document.querySelector(`.cal-chk-school[data-idx="${idx}"]`);
+          const chkNoClass = document.querySelector(`.cal-chk-noclass[data-idx="${idx}"]`);
+          if (chkSchool && !chkSchool.checked) chkSchool.checked = true;
+          if (chkNoClass && chkNoClass.checked) chkNoClass.checked = false;
+        }
+        onCalEdit();
+      };
+      function saveCalendarBulk() {
+        const records = [];
+        calSettingsData.forEach((d, i) => {
+          const isSchoolday = document.querySelector(`.cal-chk-school[data-idx="${i}"]`).checked;
+          const isNoClassDay = document.querySelector(`.cal-chk-noclass[data-idx="${i}"]`).checked;
+          const remark = document.querySelector(`.cal-input-remark[data-idx="${i}"]`).value;
+          
+          const pContainer = document.getElementById(`cal-periods-${i}`);
+          const actives = pContainer.querySelectorAll('.period-select-btn.active');
+          const pList = Array.from(actives).map(e => e.dataset.p);
+          const validPeriods = pList.join(',');
+          
+          records.push({
+            date: d.date,
+            isSchoolday: isSchoolday,
+            isNoClassDay: isNoClassDay,
+            remark: remark,
+            validPeriods: validPeriods
+          });
+        });
+        
+        const btn = document.getElementById('cal-bulk-save-btn');
+        btn.disabled = true; btn.textContent = '保存中...';
+        google.script.run
+          .withSuccessHandler(() => {
+            alert('設定を保存しました。');
+            calEdits = false;
+            updateSaveBtnState();
+            // 反映のためリロード
+            loadHomeroom();
+            if(currentSubjId) loadSubject();
+          })
+          .withFailureHandler(onFailure)
+          .saveCalendarBulk(records);
+      }
+      function findCurrentSemester(dateStr) {
+        if (!initData || !initData.semesters) return 0;
+        const idx = initData.semesters.findIndex(s => dateStr >= s.start && dateStr <= s.end);
+        return idx >= 0 ? idx : 0;
+      }
+
+      function renderSemesterButtons(containerId, stateObj, monthContainerId, loadCb) {
+        const c = document.getElementById(containerId);
+        c.innerHTML = '';
+        initData.semesters.forEach((s, i) => {
+          const btn = document.createElement('div');
+          btn.className = 'semester-btn' + (stateObj.semesterIdx === i ? ' active' : '');
+          btn.textContent = s.name;
+          btn.onclick = () => {
+             Array.from(c.children).forEach(child => child.classList.remove('active'));
+             btn.classList.add('active');
+             stateObj.semesterIdx = i;
+             const d = new Date(s.start);
+             stateObj.year = d.getFullYear();
+             stateObj.month = d.getMonth() + 1;
+             updateMonthTabs(monthContainerId, stateObj, loadCb);
+             loadCb();
+          };
+          c.appendChild(btn);
+        });
+      }
+
+      function updateMonthTabs(containerId, stateObj, loadCb) {
+        const c = document.getElementById(containerId);
+        c.innerHTML = '';
+        if (stateObj.semesterIdx < 0) return;
+        const sem = initData.semesters[stateObj.semesterIdx];
+        const start = new Date(sem.start);
+        const end = new Date(sem.end);
+        let curr = new Date(start.getFullYear(), start.getMonth(), 1);
+        const endM = new Date(end.getFullYear(), end.getMonth(), 1);
+        while (curr <= endM) {
+          const y = curr.getFullYear();
+          const m = curr.getMonth() + 1;
+          const d = document.createElement('div');
+          d.className = 'month-tab' + (stateObj.year === y && stateObj.month === m ? ' active' : '');
+          d.textContent = `${m}月`;
+          d.onclick = () => {
+             stateObj.year = y;
+             stateObj.month = m;
+             Array.from(c.children).forEach(child => child.classList.remove('active'));
+             d.classList.add('active');
+             loadCb();
+          };
+          c.appendChild(d);
+          curr.setMonth(curr.getMonth() + 1);
+        }
+      }
+
+      function getDayStatusLabel(d) {
+        let label = '';
+        if (d.remark) label += d.remark;
+        
+        if (!d.isSchoolday) return label; 
+        
+        if (d.isNoClassDay) {
+          label += (label ? '<br>' : '') + '授業なし';
+        } else if (d.validPeriods) {
+          const vp = d.validPeriods;
+          if (vp.length === 0) {
+             label += (label ? '<br>' : '') + '授業なし';
+          } else {
+             const am = [1,2,3,4];
+             const isAm = vp.length===4 && vp.every(p=>am.includes(p));
+             if (isAm) label += (label ? '<br>' : '') + '午前中';
+             else if (vp.length === 1) label += (label ? '<br>' : '') + `${vp[0]}限のみ`;
+             else label += (label ? '<br>' : '') + `${vp.join(',')}限`;
+          }
+        }
+        return label;
+      }
+
+      // --- HR Logic ---
+      function loadHomeroom() {
+        if (!initData) return;
+        document.getElementById('hr-table-wrapper').innerHTML = '<div style="padding:20px; text-align:center">Loading...</div>';
+        hrEdits = {};
+        updateSaveBtnState();
+        const hr = initData.config.HR;
+        google.script.run.withSuccessHandler(data => {
+          hrData = data;
+          renderHomeroomTable();
+        }).getHomeroomViewData({grade:hr.grade, className:hr.class, year:hrState.year, month:hrState.month});
+      }
+
+      function renderHomeroomTable() {
+        if (!hrData) return;
+        const con = document.getElementById('hr-table-wrapper');
+        const days = hrData.days;
+        const students = hrData.students;
+        
+        let h = '<table><thead><tr>';
+        h += '<th rowspan="2" class="col-fixed-name">氏名</th>';
+        h += '<th rowspan="2" class="col-fixed-stat">欠/遅/早/忌/感/公</th>';
+        days.forEach(d => {
+           let thClass = '';
+           if(d.date === TODAY_STR) thClass = 'today-col';
+           else if(d.dow === 0) thClass = 'th-sun';
+           else if(d.dow === 6) thClass = 'th-sat';
+           else if(!d.isSchoolday) thClass = 'th-holiday';
+           h += `<th class="${thClass}">${parseInt(d.date.slice(-2))}<br>${['日','月','火','水','木','金','土'][d.dow]}</th>`;
+        });
+        h += '</tr><tr>';
+        days.forEach(d => {
+           const status = getDayStatusLabel(d);
+           let thClass = '';
+           if(d.date === TODAY_STR) thClass = 'today-col';
+           else if(d.dow === 0) thClass = 'th-sun';
+           else if(d.dow === 6) thClass = 'th-sat';
+           else if(!d.isSchoolday) thClass = 'th-holiday';
+           h += `<th class="${thClass}" style="font-weight:normal; font-size:10px;">${status}</th>`;
+        });
+        h += '</tr></thead><tbody>';
+
+        const attMap = {};
+        hrData.attendance.forEach(r => attMap[`${r.date}__${r.number}`] = r);
+        Object.values(hrEdits).forEach(r => attMap[`${r.date}__${r.number}`] = r);
+        students.forEach(st => {
+          h += '<tr>';
+          h += `<td class="col-fixed-name" onclick="openStatsModal('${st.number}')">${st.number}.${st.name}</td>`;
+          const stats = calcStats(st.number, attMap);
+          
+          h += `<td class="col-fixed-stat">
+            <div class="stat-summary">
+               <span>欠:<b class="stat-val">${stats.absent}</b></span>
+               <span>遅:<b class="stat-val">${stats.late}</b></span>
+               <span>早:<b class="stat-val">${stats.early}</b></span>
+               <span>忌:<b class="stat-val">${stats.mourn}</b></span>
+               <span>感:<b class="stat-val">${stats.infection}</b></span>
+               <span>公:<b class="stat-val">${stats.inf}</b></span>
+            </div>
+          </td>`;
+
+          days.forEach(d => {
+            const key = `${d.date}__${st.number}`;
+            const rec = attMap[key] || {};
+            const stVal = rec.status || '';
+            let lbl = '出'; let cls = 'st-present';
+            if (stVal === '欠席') { lbl='欠'; cls='st-absent'; }
+            else if (stVal === '遅刻') { lbl=`遅(${rec.periods||''})`; cls='st-partial'; }
+            else if (stVal === '早退') { lbl=`早(${rec.periods||''})`; cls='st-partial'; }
+            else if (stVal === '遅刻早退') { lbl=`遅早(${rec.periods||''})`; cls='st-partial'; }
+            else if (stVal === '忌引') { lbl='忌'; cls='st-mourn'; }
+            else if (stVal === '公欠') { lbl='公'; cls='st-inf'; }
+            else if (stVal === '感染症') { lbl='感'; cls='st-infection'; }
+            
+            let tdClass = '';
+            let inner = '';
+            // 授業なし、または休日の場合は強制的に無効表示
+            if (!d.isSchoolday) {
+              lbl = '-';
+              cls = 'st-noclass';
+              inner = `<div class="cell-wrapper"><div class="cell-status st-noclass">-</div></div>`;
+            } else {
+              inner = `
+              <div class="cell-wrapper">
+                <div class="cell-status ${cls}" onclick="toggleHrStatus('${d.date}','${st.number}')">${lbl}</div>
+                <div class="cell-menu" onclick="openModal('${d.date}','${st.number}')">▼</div>
+              </div>`;
+            }
+
+            if (d.date === TODAY_STR) tdClass = 'today-col';
+            h += `<td class="${tdClass}">${inner}</td>`;
+          });
+          h += '</tr>';
+        });
+        h += '</tbody></table>';
+        con.innerHTML = h;
+      }
+
+      function toggleHrStatus(date, num) {
+        const key = `${date}__${num}`;
+        const attMap = {};
+        hrData.attendance.forEach(r => attMap[`${r.date}__${r.number}`] = r);
+        Object.values(hrEdits).forEach(r => attMap[`${r.date}__${r.number}`] = r);
+        
+        const rec = attMap[key] || {};
+        const current = rec.status || '出席';
+        
+        let next = '出席';
+        if (current === '出席' || current === '') next = '欠席';
+        else next = '出席';
+        hrEdits[key] = { date:date, number:num, status:next, periods:'', memo:'' };
+        updateSaveBtnState();
+        renderHomeroomTable();
+      }
+
+      function openStatsModal(num) {
+        const st = hrData.students.find(s => String(s.number) === String(num));
+        if(!st) return;
+        
+        document.getElementById('modal-content-input').style.display = 'none';
+        document.getElementById('modal-content-stats').style.display = 'block';
+        document.getElementById('modal-student-name').textContent = `${st.number}. ${st.name} の集計`;
+
+        const attMap = {};
+        hrData.attendance.forEach(r => attMap[`${r.date}__${r.number}`] = r);
+        Object.values(hrEdits).forEach(r => attMap[`${r.date}__${r.number}`] = r);
+        
+        const stats = calcStats(st.number, attMap);
+        const subjCounts = calcSubjCounts(st.number, attMap);
+        let html = `
+          <div style="font-weight:bold; margin-bottom:8px;">[期間内集計]</div>
+          <div class="stat-row"><span>欠席</span><b>${stats.absent}</b></div>
+          <div class="stat-row"><span>遅刻</span><b>${stats.late}</b></div>
+          <div class="stat-row"><span>早退</span><b>${stats.early}</b></div>
+          <div class="stat-row"><span>忌引</span><b>${stats.mourn}</b></div>
+          <div class="stat-row"><span>感染症</span><b>${stats.infection}</b></div>
+          <div class="stat-row"><span>公欠</span><b>${stats.inf}</b></div>
+          
+          <div style="font-weight:bold; margin-top:16px; margin-bottom:8px;">[科目別欠課 (年度累積)]</div>
+        `;
+        Object.keys(subjCounts).forEach(sid => {
+           const subName = hrData.subjects[sid] ? hrData.subjects[sid].subjectName : sid;
+           const units = hrData.subjects[sid] ? hrData.subjects[sid].units : 0;
+           const count = subjCounts[sid];
+           let remainInfo = '';
+           if(units > 0) {
+             const limit = Math.floor(units * 35 / 3);
+             const remain = limit - count;
+             if(remain <= 0) remainInfo = '<span style="color:red; font-weight:bold; margin-left:4px;">(不認定)</span>';
+             else remainInfo = `<span style="color:${remain<=5?'red':'#666'}; margin-left:4px;">(あと${remain})</span>`;
+           }
+           html += `<div class="stat-row"><span>${subName} (${units}単位)</span><b>${count}</b>${remainInfo}</div>`;
+        });
+        document.getElementById('modal-stats-body').innerHTML = html;
+        document.getElementById('modal-overlay').style.display = 'flex';
+      }
+
+      function calcStats(num, attMap) {
+        let res = { absent:0, late:0, early:0, mourn:0, inf:0, infection:0 };
+        let rangeStart = '0000-00-00', rangeEnd = '9999-99-99';
+        if (hrState.semesterIdx >= 0 && initData.semesters[hrState.semesterIdx]) {
+          rangeStart = initData.semesters[hrState.semesterIdx].start;
+          rangeEnd = initData.semesters[hrState.semesterIdx].end;
+        }
+        Object.keys(attMap).forEach(k => {
+           if (!k.endsWith('__'+num)) return;
+           const date = k.split('__')[0];
+           if (date < rangeStart || date > rangeEnd) return;
+           
+           // カレンダー情報を確認して有効な授業日のみ集計
+           const dayInfo = hrData.days.find(d => d.date === date);
+           if (!dayInfo || !dayInfo.isSchoolday) return;
+
+           const s = attMap[k].status;
+           if (s === '欠席') res.absent++;
+           else if (s === '遅刻') res.late++;
+           else if (s === '早退') res.early++;
+           else if (s === '遅刻早退') { res.late++; res.early++; }
+           else if (s === '忌引') res.mourn++;
+           else if (s === '公欠') res.inf++;
+           else if (s === '感染症') res.infection++;
+        });
+        return res;
+      }
+
+      function calcSubjCounts(num, attMap) {
+        const counts = {};
+        Object.keys(attMap).forEach(k => {
+           if (!k.endsWith('__'+num)) return;
+           const rec = attMap[k];
+           const status = rec.status;
+           if (!status || status === '出席') return;
+           const dow = new Date(rec.date).getDay();
+           
+           const dayInfo = hrData.days.find(d => d.date === rec.date);
+           if (!dayInfo || dayInfo.isNoClassDay) return;
+           const validPeriods = dayInfo.validPeriods;
+
+           const classes = hrData.timetable.filter(t => t.weekday === dow);
+           classes.forEach(c => {
+             if (validPeriods && !validPeriods.includes(c.period)) return;
+
+             let isAbs = false;
+             if (['欠席','忌引','公欠','感染症'].includes(status)) isAbs = true;
+             else if (['遅刻','早退','遅刻早退'].includes(status)) {
+               const pList = String(rec.periods||'').split(',').map(Number);
+               if (pList.includes(c.period)) isAbs = true;
+             }
+             if (isAbs) counts[c.subjectId] = (counts[c.subjectId] || 0) + 1;
+           });
+        });
+        return counts;
+      }
+
+      // --- Input Modal Logic ---
+      let currentEditKey = null;
+      let currentDayValidPeriods = null;
+      let selectedStatusSet = new Set(); 
+
+      function openModal(date, num) {
+        currentEditKey = `${date}__${num}`;
+        const dayInfo = hrData.days.find(d => d.date === date);
+        currentDayValidPeriods = dayInfo ? dayInfo.validPeriods : null;
+
+        const attMap = {};
+        hrData.attendance.forEach(r => attMap[`${r.date}__${r.number}`] = r);
+        Object.assign(attMap, hrEdits);
+        
+        const rec = attMap[currentEditKey] || {};
+        const stName = hrData.students.find(s=>String(s.number)===String(num)).name;
+        
+        document.getElementById('modal-content-input').style.display = 'block';
+        document.getElementById('modal-content-stats').style.display = 'none';
+        document.getElementById('modal-student-name').textContent = stName;
+        document.getElementById('modal-date-label').textContent = date;
+        document.getElementById('input-memo').value = rec.memo || '';
+        
+        selectedStatusSet.clear();
+        const stat = rec.status || '出席';
+        if (stat === '遅刻早退') {
+          selectedStatusSet.add('遅刻'); selectedStatusSet.add('早退');
+        } else if (stat !== '出席') {
+          selectedStatusSet.add(stat);
+        } else {
+          selectedStatusSet.add('出席');
+        }
+        updateModalBtns();
+        renderPeriodChecks(rec.periods);
+        document.getElementById('modal-overlay').style.display = 'flex';
+      }
+      function closeModal() { document.getElementById('modal-overlay').style.display = 'none';
+      }
+      
+      function renderPeriodChecks(periodsStr) {
+        const container = document.getElementById('modal-period-checks');
+        container.innerHTML = '';
+        const pArr = String(periodsStr || '').split(',');
+        for (let i = 1; i <= 7; i++) {
+          let isDisabled = false;
+          if (currentDayValidPeriods && !currentDayValidPeriods.includes(i)) {
+            isDisabled = true;
+          }
+          const label = document.createElement('label');
+          label.className = 'period-chk-label' + (isDisabled ? ' disabled' : '');
+          const input = document.createElement('input');
+          input.type = 'checkbox'; input.value = i;
+          input.disabled = isDisabled;
+          if (pArr.includes(String(i))) input.checked = true;
+          if (input.checked) label.classList.add('checked');
+          input.addEventListener('change', () => {
+             if(input.checked) label.classList.add('checked'); else label.classList.remove('checked');
+          });
+          label.appendChild(input); label.append(i);
+          container.appendChild(label);
+        }
+      }
+
+      function selectModalOpt(val) {
+         if (val === '出席') {
+           selectedStatusSet.clear();
+           selectedStatusSet.add('出席');
+         } else if (val === '遅刻' || val === '早退') {
+           if (selectedStatusSet.has('出席')) selectedStatusSet.delete('出席');
+           if (selectedStatusSet.has('欠席')) selectedStatusSet.clear();
+           if (selectedStatusSet.has('忌引')) selectedStatusSet.clear();
+           if (selectedStatusSet.has('公欠')) selectedStatusSet.clear();
+           if (selectedStatusSet.has('感染症')) selectedStatusSet.clear();
+           if (selectedStatusSet.has(val)) selectedStatusSet.delete(val);
+           else selectedStatusSet.add(val);
+           if (selectedStatusSet.size === 0) selectedStatusSet.add('出席');
+         } else {
+           selectedStatusSet.clear(); selectedStatusSet.add(val);
+         }
+         updateModalBtns();
+         if (['遅刻','早退','忌引','公欠','感染症'].includes(val) && selectedStatusSet.has(val)) {
+             document.querySelectorAll('.period-checks input:not(:disabled)').forEach(c => {
+               c.checked = true; c.parentElement.classList.add('checked');
+             });
+         }
+      }
+
+      function updateModalBtns() {
+         document.querySelectorAll('.opt-btn').forEach(b => {
+           if (selectedStatusSet.has(b.dataset.val)) b.classList.add('selected'); 
+           else b.classList.remove('selected');
+         });
+         let showPeriods = false;
+         if (!selectedStatusSet.has('出席') && !selectedStatusSet.has('欠席')) showPeriods = true;
+         document.getElementById('detail-periods').style.display = showPeriods ? 'block' : 'none';
+      }
+      
+      document.querySelectorAll('.opt-btn').forEach(b => b.addEventListener('click', ()=>selectModalOpt(b.dataset.val)));
+      function applyModal() {
+         let finalStatus = '出席';
+         if (selectedStatusSet.has('遅刻') && selectedStatusSet.has('早退')) finalStatus = '遅刻早退';
+         else if (selectedStatusSet.size > 0) {
+           for (let s of selectedStatusSet) if (s !== '出席') finalStatus = s;
+         }
+         const memo = document.getElementById('input-memo').value;
+         let ps = [];
+         if (!['出席','欠席'].includes(finalStatus)) {
+           document.querySelectorAll('.period-checks input:checked').forEach(c => ps.push(c.value));
+         }
+         const [d, n] = currentEditKey.split('__');
+         hrEdits[currentEditKey] = { date:d, number:n, status:finalStatus, periods:ps.join(','), memo:memo };
+         closeModal();
+         updateSaveBtnState();
+         renderHomeroomTable();
+      }
+
+      function saveHomeroom() {
+         const recs = Object.values(hrEdits);
+         if (!recs.length) return alert('変更なし');
+         const btn = document.getElementById('hr-save-btn');
+         btn.disabled=true; btn.textContent='保存中...';
+         const hr = initData.config.HR;
+         google.script.run
+           .withSuccessHandler(()=>{
+             alert('保存完了'); 
+             hrEdits = {}; updateSaveBtnState();
+             loadHomeroom();
+           })
+           .withFailureHandler(onFailure)
+           .saveHomeroomAttendance({grade:hr.grade, className:hr.class, records:recs});
+      }
+
+      function initSubjDropdowns() {
+        if (!initData) return;
+        const subList = initData.config.ASSIGNED_SUBJECTS || [];
+        const gs = document.getElementById('subj-grade');
+        gs.innerHTML = '<option value="" disabled selected>学年</option>';
+        const grades = [...new Set(subList.map(a=>a.grade))];
+        grades.forEach(g=>{
+           gs.innerHTML += `<option value="${g}">${g}年</option>`;
+        });
+      }
+      
+      function onSubjGradeChange() {
+        const g = document.getElementById('subj-grade').value;
+        const cs = document.getElementById('subj-class');
+        cs.innerHTML = '<option value="" disabled selected>組</option>';
+        document.getElementById('subj-subjects-container').innerHTML = '';
+        const subList = initData.config.ASSIGNED_SUBJECTS || [];
+        const classes = [...new Set(subList.filter(a=>a.grade==g).map(a=>a.class))];
+        classes.forEach(c=>{
+           cs.innerHTML += `<option value="${c}">${c}組</option>`;
+        });
+      }
+
+      function onSubjClassChange() {
+        const g = document.getElementById('subj-grade').value;
+        const c = document.getElementById('subj-class').value;
+        const container = document.getElementById('subj-subjects-container');
+        container.innerHTML = '';
+        container.style.display = 'flex';
+
+        const subList = initData.config.ASSIGNED_SUBJECTS || [];
+        const subjects = subList.filter(a=>a.grade==g && a.class==c);
+        
+        subjects.forEach((item, index) => {
+           const btn = document.createElement('div');
+           btn.className = 'subject-tab';
+           btn.textContent = item.subjectName;
+           btn.dataset.id = item.subjectId;
+           btn.onclick = () => {
+             Array.from(container.children).forEach(b => b.classList.remove('active'));
+             btn.classList.add('active');
+             currentSubjId = item.subjectId;
+             updateMonthTabs('subj-month-tabs', subjState, loadSubject);
+             loadSubject();
+           };
+           container.appendChild(btn);
+           if (index === 0) btn.click();
+        });
+      }
+
+      function triggerDefaultSubjLoad() {
+         if (!initData || !initData.config.ASSIGNED_SUBJECTS.length) return;
+         const first = initData.config.ASSIGNED_SUBJECTS[0];
+         document.getElementById('subj-grade').value = first.grade;
+         onSubjGradeChange(); 
+         document.getElementById('subj-class').value = first.class;
+         onSubjClassChange();
+      }
+
+      function loadSubject() {
+         const g=document.getElementById('subj-grade').value;
+         const c=document.getElementById('subj-class').value;
+         const s=currentSubjId;
+         if(!g || !c || !s) return;
+         document.getElementById('subj-table-wrapper').innerHTML='<div style="padding:20px; text-align:center">Loading...</div>';
+         subjEdits = {};
+         updateSaveBtnState();
+         google.script.run.withSuccessHandler(data => {
+            subjData = data;
+            renderSubjectTable();
+         }).getSubjectMonthData({grade:g, className:c, subjectId:s, year:subjState.year, month:subjState.month});
+      }
+
+      function renderSubjectTable() {
+         if (!subjData) return;
+         const con = document.getElementById('subj-table-wrapper');
+         const days = subjData.days;
+         const unitStr = subjData.subject ? `(${subjData.subject.units}単位)` : '';
+         let h = `<table><thead><tr><th rowspan="2" class="col-fixed-name">氏名</th><th rowspan="2" class="col-fixed-stat">年度累積<br>欠課数<br><span style="font-size:10px; font-weight:normal;">(あと何回)</span></th>`;
+         days.forEach(d => {
+            let thClass = '';
+            if(d.date === TODAY_STR) thClass = 'today-col';
+            else if(d.dow === 0) thClass = 'th-sun';
+            else if(d.dow === 6) thClass = 'th-sat';
+            else if(!d.isSchoolday) thClass = 'th-holiday';
+            h += `<th class="${thClass}">${parseInt(d.date.slice(-2))}<br>${['日','月','火','水','木','金','土'][d.dow]}</th>`;
+         });
+         h += '</tr><tr>';
+         days.forEach(d => {
+            const status = getDayStatusLabel(d);
+            let thClass = '';
+            if(d.date === TODAY_STR) thClass = 'today-col';
+            else if(d.dow === 0) thClass = 'th-sun';
+            else if(d.dow === 6) thClass = 'th-sat';
+            else if(!d.isSchoolday) thClass = 'th-holiday';
+            h += `<th class="${thClass}" style="font-weight:normal; font-size:10px;">${status}</th>`;
+         });
+         h += '</tr></thead><tbody>';
+         
+         subjData.students.forEach(st => {
+            h += '<tr>';
+            h += `<td class="col-fixed-name">${st.number}.${st.name}</td>`;
+            
+            const count = subjData.totalAbsentMap[st.number]||0;
+            const units = subjData.subject ? subjData.subject.units : 0;
+            
+            let remainStr = '';
+            let warnClass = '';
+            if (units > 0) {
+              const limit = Math.floor(units * 35 / 3);
+              const remain = limit - count;
+              warnClass = getWarningClass(count, units);
+              if (remain <= 0) remainStr = `<br><span style="font-size:11px; color:red; font-weight:bold;">(不認定)</span>`;
+              else remainStr = `<br><span style="font-size:11px; color:${remain<=5?'red':'#666'}; font-weight:${remain<=5?'bold':'normal'};">(あと${remain}回)</span>`;
+            }
+
+            h += `<td class="col-fixed-stat ${warnClass}" style="text-align:center; font-size:14px;">${count}${remainStr}</td>`;
+            
+            days.forEach(d => {
+               const key = `${d.date}__${d.period}__${st.number}`;
+               const val = subjEdits[key] || (subjData.attendance[key]?subjData.attendance[key].status:'');
+               let lbl='出', cls='st-present';
+               if (val==='欠課'||val==='欠席') { lbl='欠'; cls='st-absent'; }
+               else if (val==='公欠') { lbl='公'; cls='st-inf'; }
+               
+               let tdClass = '';
+               let btnAttr = `onclick="toggleSubj('${d.date}','${d.period}','${st.number}')"`;
+               if (d.date === TODAY_STR) tdClass = 'today-col';
+               if (d.isNoClassDay || !d.isSchoolday) {
+                 lbl='-';
+                 cls='st-noclass';
+                 btnAttr = 'disabled';
+               }
+
+               h += `<td class="${tdClass}">
+                 <button class="cell-btn ${cls}" ${btnAttr}>${lbl}</button>
+               </td>`;
+            });
+            h += '</tr>';
+         });
+         h += '</tbody></table>';
+         con.innerHTML = h;
+      }
+      
+      function toggleSubj(d, p, n) {
+         const key = `${d}__${p}__${n}`;
+         const cur = subjEdits[key] || (subjData.attendance[key]?subjData.attendance[key].status:'');
+         let next = '';
+         if (!cur || cur==='出席') next='欠課';
+         else if (cur==='欠課') next='公欠';
+         else next='出席';
+         subjEdits[key] = next;
+         updateSaveBtnState();
+         renderSubjectTable();
+      }
+      
+      function saveSubject() {
+         const recs = [];
+         Object.keys(subjEdits).forEach(k => {
+            const [d, p, n] = k.split('__');
+            recs.push({date:d, period:p, number:n, status:subjEdits[k]});
+         });
+         if (!recs.length) return alert('変更なし');
+         const btn = document.getElementById('subj-save-btn');
+         btn.disabled=true; btn.textContent='保存中...';
+         google.script.run
+           .withSuccessHandler(()=>{
+              alert('保存完了'); 
+              subjEdits = {}; updateSaveBtnState();
+              loadSubject();
+           })
+           .withFailureHandler(onFailure)
+           .saveSubjectAttendance({
+              grade:document.getElementById('subj-grade').value,
+              className:document.getElementById('subj-class').value,
+              subjectId:currentSubjId,
+              records:recs
+           });
+      }
+
+      window.onload = init;
+  </script>
