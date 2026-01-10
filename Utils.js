@@ -4,7 +4,6 @@
 
 function getAllSheetData_(ss, targetSheets) {
   const data = {};
-  // targetSheetsが指定されていない場合は全シート対象
   const sheetsToLoad = targetSheets || SHEET_NAMES;
   
   sheetsToLoad.forEach(name => {
@@ -44,112 +43,71 @@ function dateToKey_(d) {
 }
 
 function saveAttendanceCommon_(sheetName, payload, headerList) {
-  // LockServiceによる排他制御
   const lock = LockService.getScriptLock();
-  if (lock.tryLock(10000)) { // 最大10秒待機
-    try {
-      const ss = SpreadsheetApp.openById(SS_ID);
-      let sh = ss.getSheetByName(sheetName);
-      if (!sh) throw new Error(`Sheet "${sheetName}" not found.`);
+  if (!lock.tryLock(10000)) throw new Error('サーバーが混み合っています。再試行してください。');
 
-      const lastRow = sh.getLastRow();
-      let header = [];
-      if (lastRow === 0) {
-        sh.appendRow(headerList);
-        header = headerList;
-      } else {
-        header = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-        const missingCols = [];
-        headerList.forEach(hName => {
-          if (!header.includes(hName)) missingCols.push(hName);
-        });
-        if (missingCols.length > 0) {
-          const startCol = header.length + 1;
-          sh.getRange(1, startCol, 1, missingCols.length).setValues([missingCols]);
-          header = header.concat(missingCols);
-        }
-      }
+  try {
+    const ss = SpreadsheetApp.openById(SS_ID);
+    const sh = ss.getSheetByName(sheetName);
+    if (!sh) throw new Error('Sheet not found: ' + sheetName);
 
-      const range = sh.getDataRange();
-      const values = range.getValues();
-      const idx = {};
-      header.forEach((h, i) => (idx[h] = i));
-
-      const createKey = (row) => {
-        const d = dateToKey_(row[idx.date]);
-        const g = String(row[idx.grade]);
-        const c = String(row[idx.class]);
-        const n = String(row[idx.number] !== undefined && row[idx.number] !== "" ? row[idx.number] : (row[idx.studentId] || ''));
-        if (sheetName === 'attendance_subject') {
-          const s = String(row[idx.subjectId]);
-          const p = String(row[idx.period]);
-          return `${d}_${s}_${g}_${c}_${p}_${n}`;
-        } else {
-          return `${d}_${g}_${c}_${n}`;
-        }
-      };
-
-      const keyToRowMap = {};
-      for (let i = 1; i < values.length; i++) {
-        const key = createKey(values[i]);
-        keyToRowMap[key] = i + 1;
-      }
-
-      const toUpdate = [];
-      const toAppend = [];
-
-      const grade = String(payload.grade);
-      const className = String(payload.className);
-      const subjectId = String(payload.subjectId || '');
-      (payload.records || []).forEach(rec => {
-        const n = String(rec.number);
-        let key;
-        if (sheetName === 'attendance_subject') {
-          key = `${rec.date}_${subjectId}_${grade}_${className}_${rec.period}_${n}`;
-        } else {
-          key = `${rec.date}_${grade}_${className}_${n}`;
-        }
-
-        const rowData = new Array(header.length).fill('');
-        header.forEach((col, i) => {
-          if (col === 'date') rowData[i] = rec.date;
-          else if (col === 'grade') rowData[i] = grade;
-          else if (col === 'class') rowData[i] = className;
-          else if (col === 'number') rowData[i] = n;
-          else if (col === 'studentId') rowData[i] = n;
-          else if (col === 'status') rowData[i] = rec.status;
-          else if (col === 'subjectId') rowData[i] = subjectId;
-          else if (col === 'period') rowData[i] = rec.period;
-          else if (col === 'periods') rowData[i] = rec.periods;
-          else if (col === 'memo') rowData[i] = rec.memo;
-        });
-
-        if (keyToRowMap[key]) {
-          toUpdate.push({ row: keyToRowMap[key], values: rowData });
-        } else {
-          toAppend.push(rowData);
-        }
-      });
-      toUpdate.forEach(item => {
-        sh.getRange(item.row, 1, 1, header.length).setValues([item.values]);
-      });
-      if (toAppend.length) {
-        sh.getRange(lastRow + 1, 1, toAppend.length, header.length).setValues(toAppend);
-      }
-      return { success: true };
-    } catch (e) {
-      throw e;
-    } finally {
-      lock.releaseLock();
+    const lastRow = sh.getLastRow();
+    const range = sh.getDataRange();
+    const values = range.getValues();
+    
+    // ヘッダー確認・作成
+    let headers = values[0];
+    if (lastRow === 0 || !headers) {
+        headers = headerList;
+        sh.appendRow(headers);
     }
-  } else {
-    throw new Error('他人が保存中です。しばらく待ってからやり直してください。');
+
+    const records = Array.isArray(payload) ? payload : [payload];
+    const toAppend = [];
+
+    records.forEach(rec => {
+        const rowData = headers.map(h => {
+            let val = rec[h];
+            if (val === undefined || val === null) return '';
+            if (h === 'date') return dateToKey_(val);
+            return val;
+        });
+        toAppend.push(rowData);
+    });
+    
+    if (toAppend.length > 0) {
+        sh.getRange(lastRow + 1, 1, toAppend.length, headers.length).setValues(toAppend);
+    }
+
+    return { success: true };
+
+  } catch (e) {
+    throw e;
+  } finally {
+    lock.releaseLock();
   }
 }
 
-function createSheetIfNotExists_(ss, name, header) {
-  let sh = ss.getSheetByName(name);
-  if (!sh) { sh = ss.insertSheet(name); }
-  const range = sh.getRange(1, 1, 1, header.length);
-  if (range.isBlank()) { range.setValues([header]); }
+// ★修正: 祝日カレンダーIDを明示し、取得エラー時の対策を追加
+function getHolidaysMap_(start, end) {
+  const map = {};
+  // 日本の祝日カレンダーID
+  const calId = 'ja.japanese#holiday@group.v.calendar.google.com';
+  
+  try {
+    const cal = CalendarApp.getCalendarById(calId);
+    if (!cal) {
+      console.warn(`Calendar ID not found: ${calId}`);
+      return map;
+    }
+    const events = cal.getEvents(start, end);
+    events.forEach(e => {
+      // タイムゾーンをスクリプトに合わせてフォーマット
+      const k = Utilities.formatDate(e.getStartTime(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      map[k] = true;
+    });
+  } catch (e) {
+    console.warn('Holiday calendar fetch failed: ' + e.message);
+  }
+  return map;
 }

@@ -9,7 +9,7 @@
 </head>
 
 <body>
-  <header class="app-header">出席管理 Ver27</header>
+  <header class="app-header">出席管理 Ver29</header>
 
   <div class="tab-row">
     <div class="tab-btn active" data-tab="homeroom">クラス担任</div>
@@ -41,6 +41,8 @@
           <select id="subj-class"><option value="" disabled selected>組</option></select>
           <div id="subj-subjects-container" class="subject-selector" style="margin-left:8px;"></div>
         </div>
+        <div id="subj-remaining-info" style="font-size:12px; font-weight:bold; color:#059669; margin:4px 0;"></div>
+        
         <div class="row" style="margin-top:8px;">
           <label style="font-size:12px; font-weight:bold;">学期:</label>
           <div id="subj-semester-btns" class="semester-btns"></div>
@@ -73,8 +75,7 @@
             <button class="btn" id="cal-bulk-save-btn" disabled>一括保存</button>
           </div>
           <div style="font-size:10px; color:#666; margin-top:4px;">
-            ※「有効時限」は "1,2,3,4" のように入力（空欄は全授業あり）<br>
-            ※変更があると保存ボタンが有効になります
+            ※「有効時限」は "1,2,3,4" のように入力（空欄は全授業あり）
           </div>
         </div>
 
@@ -99,10 +100,8 @@
   </div>
 
   <div class="modal-overlay" id="modal-overlay">
-    <div class="modal">
+    <div id="modal-content-input" class="modal" style="display:none;">
       <h3 id="modal-student-name" style="margin:0 0 8px 0;"></h3>
-
-      <div id="modal-content-input">
         <div id="modal-date-label" style="font-size:12px; color:#666; margin-bottom:12px;"></div>
         <div class="modal-opts">
           <button class="opt-btn" data-val="出席">出席</button>
@@ -112,7 +111,6 @@
           <button class="opt-btn" data-val="忌引">忌引</button>
           <button class="opt-btn" data-val="感染症">感染症</button>
           <button class="opt-btn" data-val="公欠">公欠</button>
-          <div style="display:none;"></div>
         </div>
         <div id="detail-periods" style="display:none;">
           <div style="font-size:12px; font-weight:bold; margin-bottom:4px;">欠課時限を選択</div>
@@ -126,15 +124,45 @@
           <button class="btn" style="background:#ccc; color:#333;" onclick="closeModal()">キャンセル</button>
           <button class="btn" onclick="applyModal()">OK</button>
         </div>
-      </div>
+    </div>
 
-      <div id="modal-content-stats" style="display:none;">
-        <div id="modal-stats-body" style="font-size:13px;"></div>
-        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+    <div id="modal-content-stats" class="modal" style="display:none;">
+      <h3 id="modal-stats-title" style="margin:0 0 8px 0;"></h3>
+      <div id="modal-stats-body" style="font-size:13px;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+        <button class="btn" onclick="closeModal()">閉じる</button>
+      </div>
+    </div>
+    
+    <div id="modal-day-config" class="modal" style="display:none;">
+       <h3 id="day-config-title" style="margin:0 0 8px 0;"></h3>
+       <div style="margin-bottom:12px;">
+         <label><input type="checkbox" id="dc-is-schoolday"> 登校日</label>
+         <label style="margin-left:16px;"><input type="checkbox" id="dc-is-noclass"> 授業なし</label>
+       </div>
+       <div style="margin-bottom:12px;">
+         <label style="font-size:12px; display:block; margin-bottom:4px;">行事・備考</label>
+         <input type="text" id="dc-remark" style="width:100%;" placeholder="体育祭など">
+       </div>
+       <div style="margin-bottom:12px;">
+         <label style="font-size:12px; display:block; margin-bottom:4px;">授業変更 (1限～7限)</label>
+         <div id="dc-periods-container" style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+            </div>
+       </div>
+       <div style="display:flex; justify-content:flex-end; gap:8px;">
+          <button class="btn" style="background:#ccc; color:#333;" onclick="closeModal()">キャンセル</button>
+          <button class="btn" onclick="saveDayConfig()">保存</button>
+       </div>
+    </div>
+
+    <div id="modal-subject-history" class="modal" style="display:none;">
+       <h3 id="sub-hist-title" style="margin:0 0 8px 0;">欠席履歴</h3>
+       <div id="sub-hist-list" style="max-height:300px; overflow-y:auto; margin-bottom:16px;">
+          読み込み中...
+       </div>
+       <div style="display:flex; justify-content:flex-end;">
           <button class="btn" onclick="closeModal()">閉じる</button>
-        </div>
-      </div>
-
+       </div>
     </div>
   </div>
 
