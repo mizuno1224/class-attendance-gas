@@ -57,9 +57,10 @@ function saveAttendanceCommon_(sheetName, payload, headerList) {
     
     // ヘッダー確認・作成
     let headers = values[0];
-    if (lastRow === 0 || !headers) {
+    if (lastRow === 0 || !headers || headers.length === 0) {
         headers = headerList;
         sh.appendRow(headers);
+        lastRow = 1; // ヘッダー行を追加したので、データは2行目から
     }
 
     const records = Array.isArray(payload) ? payload : [payload];
@@ -76,7 +77,8 @@ function saveAttendanceCommon_(sheetName, payload, headerList) {
     });
     
     if (toAppend.length > 0) {
-        sh.getRange(lastRow + 1, 1, toAppend.length, headers.length).setValues(toAppend);
+        const startRow = lastRow + 1;
+        sh.getRange(startRow, 1, toAppend.length, headers.length).setValues(toAppend);
     }
 
     return { success: true };

@@ -21,6 +21,12 @@ function getCalendarSettingsViewData(year, month) {
 function generateCalendarData_(year, month, calendarRows) {
   // DBのデータをマップ化
   const calMap = {};
+  // シートの TRUE/FALSE が文字列で返る場合に対応
+  function parseBool(v) {
+    if (v === true || v === false) return v;
+    const s = String(v).toLowerCase();
+    return s === 'true' || s === '1' || s === 'yes';
+  }
   calendarRows.forEach(r => {
     const k = dateToKey_(r.date);
     let vp = null;
@@ -30,8 +36,8 @@ function generateCalendarData_(year, month, calendarRows) {
     }
     calMap[k] = {
       isEntryExists: true,
-      isSchoolday: Boolean(r.isSchoolday),
-      isNoClassDay: Boolean(r.isNoClassDay),
+      isSchoolday: parseBool(r.isSchoolday),
+      isNoClassDay: parseBool(r.isNoClassDay),
       remark: r.remark || '',
       validPeriods: vp
     };
@@ -88,39 +94,49 @@ function saveCalendarBulk(records) {
     sh.appendRow(['date', 'isSchoolday', 'isNoClassDay', 'remark', 'validPeriods']);
   }
 
-  // 既存データを読み込んでマップ化（更新用）
-  const header = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-  const idx = {}; header.forEach((h, i) => idx[h] = i);
+  let header = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+  // 古いシートで isNoClassDay 列がない場合は列を追加
+  if (header.indexOf('isNoClassDay') === -1) {
+    var colIdx = header.indexOf('isSchoolday');
+    var insertCol = (colIdx >= 0 ? colIdx + 2 : 3);
+    sh.insertColumnAfter(insertCol - 1);
+    sh.getRange(1, insertCol).setValue('isNoClassDay');
+    header = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+  }
+  const idx = {}; header.forEach(function(h, i) { idx[h] = i; });
+  if (idx.date === undefined) {
+    throw new Error('calendar シートに date 列がありません。ヘッダーを確認してください。');
+  }
   const data = sh.getDataRange().getValues();
   const rowMap = {};
-  for(let i=1; i<data.length; i++) {
-      const k = dateToKey_(data[i][idx.date]);
-      if(k) rowMap[k] = i + 1;
+  for (var i = 1; i < data.length; i++) {
+    const k = dateToKey_(data[i][idx.date]);
+    if (k) rowMap[k] = i + 1;
   }
 
   const toAppend = [];
-  
-  records.forEach(rec => {
-      const k = rec.date;
-      const rowNum = rowMap[k];
-      const rowData = header.map(h => {
-          if (h === 'date') return rec.date;
-          if (h === 'isSchoolday') return rec.isSchoolday;
-          if (h === 'isNoClassDay') return rec.isNoClassDay;
-          if (h === 'remark') return rec.remark;
-          if (h === 'validPeriods') return rec.validPeriods;
-          return '';
-      });
+  records.forEach(function(rec) {
+    const k = rec.date;
+    const rowNum = rowMap[k];
+    const rowData = header.map(function(h) {
+      if (h === 'date') return rec.date;
+      if (h === 'isSchoolday') return rec.isSchoolday === true || String(rec.isSchoolday).toLowerCase() === 'true';
+      if (h === 'isNoClassDay') return rec.isNoClassDay === true || String(rec.isNoClassDay).toLowerCase() === 'true';
+      if (h === 'remark') return rec.remark != null ? String(rec.remark) : '';
+      if (h === 'validPeriods') return rec.validPeriods != null ? String(rec.validPeriods) : '';
+      return '';
+    });
 
-      if (rowNum) {
-          sh.getRange(rowNum, 1, 1, header.length).setValues([rowData]);
-      } else {
-          toAppend.push(rowData);
-      }
+    if (rowNum) {
+      sh.getRange(rowNum, 1, 1, header.length).setValues([rowData]);
+    } else {
+      toAppend.push(rowData);
+    }
   });
 
   if (toAppend.length > 0) {
-      sh.getRange(sh.getLastRow() + 1, 1, toAppend.length, header.length).setValues(toAppend);
+    const startRow = sh.getLastRow() + 1;
+    sh.getRange(startRow, 1, toAppend.length, header.length).setValues(toAppend);
   }
   return { success: true };
 }

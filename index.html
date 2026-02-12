@@ -70,8 +70,13 @@
         </div>
 
         <div id="settings-ui-calendar">
-          <div class="row" style="justify-content:space-between; align-items:center;">
-            <input type="month" id="cal-setting-month" style="font-size:14px;">
+          <div class="row" style="justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <div class="row" style="align-items:center; margin:0;">
+              <label style="font-size:12px; font-weight:bold; margin-right:6px;">年</label>
+              <select id="cal-setting-year" style="font-size:14px; min-width:72px;"></select>
+              <span style="font-size:12px; font-weight:bold; margin-left:12px; margin-right:4px;">月</span>
+              <div id="cal-month-btns" class="cal-month-btns"></div>
+            </div>
             <button class="btn" id="cal-bulk-save-btn" disabled>一括保存</button>
           </div>
           <div style="font-size:10px; color:#666; margin-top:4px;">

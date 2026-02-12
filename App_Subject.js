@@ -63,22 +63,37 @@ function getSubjectMonthData(params) {
     String(r.subjectId) === subjectId
   );
 
+  // 年度範囲（1学期開始～最終学期終了）で科目別欠課を年度累積にする
+  var yearStart = null;
+  var yearEnd = null;
+  var semesters = (allData['semesters'] || []).map(function(r) {
+    return { start: dateToKey_(r.startDate), end: dateToKey_(r.endDate) };
+  });
+  if (semesters.length > 0) {
+    yearStart = semesters[0].start;
+    yearEnd = semesters[semesters.length - 1].end;
+  }
+
   const totalAbsentMap = {};
   const attMap = {};
-  const targetYM = new Date(year, month - 1, 1);
-  const nextYM = new Date(year, month, 1);
+  // タイムゾーンに依存しないよう、年月は文字列 "YYYY-MM-DD" で比較する（1学期など他学期の記録が漏れないように）
+  const pad = function(n) { return ('0' + n).slice(-2); };
+  const targetYMStr = year + '-' + pad(month) + '-01';
+  const nextMonth = month === 12 ? { y: year + 1, m: 1 } : { y: year, m: month + 1 };
+  const nextYMStr = nextMonth.y + '-' + pad(nextMonth.m) + '-01';
 
   attRows.forEach(r => {
     const n = String(r.number || r.studentId);
     const stat = r.status;
     const dStr = dateToKey_(r.date);
+    const dateStr = dStr.slice(0, 10);
 
-    if (stat === '欠課' || stat === '欠席') {
+    // 科目別欠課数は年度累積（年度範囲内の欠課・欠席のみカウント）
+    if ((stat === '欠課' || stat === '欠席') && yearStart && yearEnd && dateStr >= yearStart && dateStr <= yearEnd) {
       totalAbsentMap[n] = (totalAbsentMap[n] || 0) + 1;
     }
 
-    const dObj = new Date(r.date);
-    if (dObj >= targetYM && dObj < nextYM) {
+    if (dateStr >= targetYMStr && dateStr < nextYMStr) {
       const p = String(r.period);
       attMap[`${dStr}__${p}__${n}`] = {
         status: stat
@@ -157,12 +172,7 @@ function getSubjectMonthData(params) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayStr = dateToKey_(today);
-  
-  const semesters = allData['semesters'].map(r => ({
-    name: r.semesterName,
-    start: dateToKey_(r.startDate),
-    end: dateToKey_(r.endDate)
-  }));
+
   const currentSemester = semesters.find(s => todayStr >= s.start && todayStr <= s.end);
 
   if (currentSemester) {
@@ -249,5 +259,17 @@ function getStudentSubjectAbsenceHistory(grade, className, subjectId, studentNum
 }
 
 function saveSubjectAttendance(payload) {
-  return saveAttendanceCommon_('attendance_subject', payload, ['date', 'subjectId', 'grade', 'class', 'period', 'number', 'status']);
+  // payload.records の各件に grade, class, subjectId を付与して保存する
+  const records = (payload.records || []).map(function(r) {
+    return {
+      date: r.date,
+      subjectId: payload.subjectId,
+      grade: payload.grade,
+      'class': payload.className,
+      period: r.period,
+      number: r.number,
+      status: r.status
+    };
+  });
+  return saveAttendanceCommon_('attendance_subject', records, ['date', 'subjectId', 'grade', 'class', 'period', 'number', 'status']);
 }

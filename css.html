@@ -491,6 +491,29 @@
       color: white;
     }
 
+    .cal-month-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .cal-month-btn {
+      min-width: 36px;
+      padding: 4px 8px;
+      border: 1px solid #d1d5db;
+      background: #fff;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .cal-month-btn:hover {
+      background: #f3f4f6;
+    }
+    .cal-month-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
     .subject-selector {
       display: flex;
       gap: 8px;
@@ -526,6 +549,47 @@
 
     .stat-row:last-child {
       border-bottom: none;
+    }
+
+    .modal-stats-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+    .modal-stats-table th,
+    .modal-stats-table td {
+      border: 1px solid var(--border);
+      padding: 6px 8px;
+      text-align: left;
+    }
+    .modal-stats-table th {
+      background: #f1f5f9;
+      font-weight: 600;
+    }
+    .modal-stats-table .modal-stats-num {
+      text-align: right;
+      min-width: 2.5em;
+    }
+    .modal-stats-table-subj th:nth-child(2),
+    .modal-stats-table-subj td:nth-child(2),
+    .modal-stats-table-subj th:nth-child(3),
+    .modal-stats-table-subj td:nth-child(3),
+    .modal-stats-table-subj th:nth-child(4),
+    .modal-stats-table-subj td:nth-child(4) {
+      text-align: center;
+    }
+    .modal-stats-table-subj .modal-stats-num {
+      text-align: center;
+    }
+    .modal-stats-warn {
+      color: var(--warn-color);
+      font-weight: bold;
+    }
+    #modal-stats-body {
+      max-height: 60vh;
+      overflow-y: auto;
+      overflow-x: auto;
     }
 
     .stat-summary {

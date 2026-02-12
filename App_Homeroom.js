@@ -71,13 +71,16 @@ function getHomeroomDataLogic_(allData, grade, className, year, month) {
       memo: r.memo || ''
     }));
 
+  // タイムゾーンに依存しないよう、年月は文字列 "YYYY-MM-DD" で比較する（1学期など他学期の記録が漏れないように）
+  const pad = function(n) { return ('0' + n).slice(-2); };
+  const targetYMStr = year + '-' + pad(month) + '-01';
+  const nextMonth = month === 12 ? { y: year + 1, m: 1 } : { y: year, m: month + 1 };
+  const nextYMStr = nextMonth.y + '-' + pad(nextMonth.m) + '-01';
+
   const attMap = [];
-  const targetYM = new Date(year, month - 1, 1);
-  const nextYM = new Date(year, month, 1);
-  
   attAll.forEach(r => {
-    const dObj = new Date(r.date);
-    if (dObj >= targetYM && dObj < nextYM) {
+    const dateStr = String(r.date).slice(0, 10); // "YYYY-MM-DD" 部分のみ
+    if (dateStr >= targetYMStr && dateStr < nextYMStr) {
       attMap.push(r);
     }
   });
@@ -86,12 +89,54 @@ function getHomeroomDataLogic_(allData, grade, className, year, month) {
     students: students,
     days: days,
     attendance: attMap,
+    attendanceYearly: attAll,
     subjects: subjectsMap,
     timetable: timetable,
     dailyOverrides: dailyOverrides
   };
 }
 
+// 年度累積用カレンダー（別APIで遅延取得し初回表示を軽量化）
+function getHomeroomYearlyCalendar(grade, className) {
+  var ss = SpreadsheetApp.openById(SS_ID);
+  var requiredSheets = ['calendar', 'semesters'];
+  var allData = getAllSheetData_(ss, requiredSheets);
+  var daysYearly = [];
+  var semesters = (allData['semesters'] || []).map(function(r) {
+    return { start: dateToKey_(r.startDate), end: dateToKey_(r.endDate) };
+  });
+  if (semesters.length > 0) {
+    var yearStart = semesters[0].start;
+    var yearEnd = semesters[semesters.length - 1].end;
+    var startParts = yearStart.split('-').map(Number);
+    var endParts = yearEnd.split('-').map(Number);
+    var y1 = startParts[0], m1 = startParts[1];
+    var y2 = endParts[0], m2 = endParts[1];
+    var currY = y1, currM = m1;
+    while (currY < y2 || (currY === y2 && currM <= m2)) {
+      daysYearly = daysYearly.concat(generateCalendarData_(currY, currM, allData['calendar'] || []));
+      if (currM === 12) { currY++; currM = 1; } else { currM++; }
+    }
+    daysYearly = daysYearly.filter(function(d) {
+      var ds = String(d.date).slice(0, 10);
+      return ds >= yearStart && ds <= yearEnd;
+    });
+  }
+  return { daysYearly: daysYearly };
+}
+
 function saveHomeroomAttendance(payload) {
-  return saveAttendanceCommon_('attendance_hr', payload.records, ['date', 'grade', 'class', 'number', 'status', 'periods', 'memo'], payload.grade, payload.className);
+  // 読み込み時のフィルタ（grade/class）に合致させるため、各レコードに grade と class を付与する
+  const records = (payload.records || []).map(function(r) {
+    return {
+      date: r.date,
+      grade: payload.grade,
+      'class': payload.className,
+      number: r.number,
+      status: r.status,
+      periods: r.periods || '',
+      memo: r.memo || ''
+    };
+  });
+  return saveAttendanceCommon_('attendance_hr', records, ['date', 'grade', 'class', 'number', 'status', 'periods', 'memo']);
 }
