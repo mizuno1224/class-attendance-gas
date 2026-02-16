@@ -43,7 +43,7 @@ function saveMasterData(sheetName, headers, records) {
 
   const lastRow = sh.getLastRow();
   if (lastRow > 1) {
-    sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).clearContent();
+    sh.getRange(2, 1, lastRow, sh.getLastColumn()).clearContent();
   }
 
   if (records.length === 0) return { success: true };
@@ -62,7 +62,7 @@ function saveMasterData(sheetName, headers, records) {
 function saveDayConfiguration(calendarRecord, timetableChanges, grade, className) {
   const ss = SpreadsheetApp.openById(SS_ID);
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) throw new Error('Busy');
+  if (!lock.tryLock(15000)) throw new Error('Busy');
 
   try {
     // 1. カレンダー
@@ -83,7 +83,7 @@ function saveDayConfiguration(calendarRecord, timetableChanges, grade, className
     const rowData = calHeaders.map(h => calendarRecord[h]);
     
     if(foundRow > 0) {
-        calSh.getRange(foundRow, 1, 1, calHeaders.length).setValues([rowData]);
+        calSh.getRange(foundRow, 1, foundRow, calHeaders.length).setValues([rowData]);
     } else {
         calSh.appendRow(rowData);
     }
@@ -117,10 +117,10 @@ function saveDayConfiguration(calendarRecord, timetableChanges, grade, className
         });
         
         if (ttSh.getLastRow() > 1) {
-            ttSh.getRange(2, 1, ttSh.getLastRow()-1, ttSh.getLastColumn()).clearContent();
+            ttSh.getRange(2, 1, ttSh.getLastRow(), ttSh.getLastColumn()).clearContent();
         }
         if (newRows.length > 0) {
-            ttSh.getRange(2, 1, newRows.length, ttHeader.length).setValues(newRows);
+            ttSh.getRange(2, 1, 1 + newRows.length, ttHeader.length).setValues(newRows);
         }
     }
 

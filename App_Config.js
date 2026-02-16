@@ -2,6 +2,7 @@
 // 設定
 // =========================
 
+const APP_VERSION = '29';
 const SS_ID = SpreadsheetApp.getActive().getId();
 
 // デフォルト設定
@@ -20,7 +21,9 @@ const SHEET_NAMES = [
 // =========================
 
 function doGet(e) {
-  return HtmlService.createTemplateFromFile('index')
+  const template = HtmlService.createTemplateFromFile('index');
+  template.APP_VERSION = APP_VERSION;
+  return template
     .evaluate()
     .setTitle('出席管理アプリ')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, user-scalable=no');

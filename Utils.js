@@ -34,17 +34,24 @@ function getAllSheetData_(ss, targetSheets) {
 
 function dateToKey_(d) {
   if (!d) return "";
+  if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10);
   const dt = new Date(d);
   if (isNaN(dt.getTime())) return String(d);
-  const y = dt.getFullYear();
-  const m = ('0' + (dt.getMonth() + 1)).slice(-2);
-  const day = ('0' + dt.getDate()).slice(-2);
-  return `${y}-${m}-${day}`;
+  try {
+    const ss = SpreadsheetApp.openById(SS_ID);
+    const tz = ss.getSpreadsheetTimeZone();
+    return Utilities.formatDate(dt, tz, 'yyyy-MM-dd');
+  } catch (e) {
+    const y = dt.getFullYear();
+    const m = ('0' + (dt.getMonth() + 1)).slice(-2);
+    const day = ('0' + dt.getDate()).slice(-2);
+    return `${y}-${m}-${day}`;
+  }
 }
 
 function saveAttendanceCommon_(sheetName, payload, headerList) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) throw new Error('サーバーが混み合っています。再試行してください。');
+  if (!lock.tryLock(15000)) throw new Error('サーバーが混み合っています。再試行してください。');
 
   try {
     const ss = SpreadsheetApp.openById(SS_ID);
@@ -56,29 +63,56 @@ function saveAttendanceCommon_(sheetName, payload, headerList) {
     const values = range.getValues();
     
     // ヘッダー確認・作成
-    let headers = values[0];
+    let headers = (values.length > 0 && values[0]) ? values[0] : null;
     if (lastRow === 0 || !headers || headers.length === 0) {
-        headers = headerList;
-        sh.appendRow(headers);
-        lastRow = 1; // ヘッダー行を追加したので、データは2行目から
+      headers = headerList;
+      sh.appendRow(headers);
     }
 
     const records = Array.isArray(payload) ? payload : [payload];
-    const toAppend = [];
-
-    records.forEach(rec => {
-        const rowData = headers.map(h => {
-            let val = rec[h];
-            if (val === undefined || val === null) return '';
-            if (h === 'date') return dateToKey_(val);
-            return val;
-        });
-        toAppend.push(rowData);
+    const toAppend = records.map(rec => {
+      return headers.map(h => {
+        let val = rec[h];
+        if (val === undefined || val === null) return '';
+        if (h === 'date') return dateToKey_(val);
+        return val;
+      });
     });
-    
-    if (toAppend.length > 0) {
-        const startRow = lastRow + 1;
-        sh.getRange(startRow, 1, toAppend.length, headers.length).setValues(toAppend);
+
+    // 同一キーの既存行を除外するためのキー集合（今回保存するレコード）
+    const payloadKeys = new Set();
+    records.forEach(rec => {
+      const d = dateToKey_(rec.date);
+      if (sheetName === 'attendance_hr') {
+        payloadKeys.add(d + '__' + String(rec.grade) + '__' + String(rec.class) + '__' + String(rec.number));
+      } else if (sheetName === 'attendance_subject') {
+        payloadKeys.add(d + '__' + String(rec.subjectId) + '__' + String(rec.grade) + '__' + String(rec.class) + '__' + String(rec.period) + '__' + String(rec.number));
+      }
+    });
+
+    const idx = {};
+    headers.forEach((h, i) => { idx[h] = i; });
+
+    function rowToKey_(row) {
+      const d = dateToKey_(row[idx.date]);
+      if (sheetName === 'attendance_hr') {
+        return d + '__' + String(row[idx.grade] || '') + '__' + String(row[idx.class] || '') + '__' + String(row[idx.number] || '');
+      }
+      if (sheetName === 'attendance_subject') {
+        return d + '__' + String(row[idx.subjectId] || '') + '__' + String(row[idx.grade] || '') + '__' + String(row[idx.class] || '') + '__' + String(row[idx.period] || '') + '__' + String(row[idx.number] || '');
+      }
+      return '';
+    }
+
+    const dataRows = values.length > 1 ? values.slice(1) : [];
+    const filteredExisting = dataRows.filter(row => !payloadKeys.has(rowToKey_(row)));
+    const allDataRows = filteredExisting.concat(toAppend);
+
+    const newLastRow = 1 + allDataRows.length;
+    sh.getRange(1, 1, newLastRow, headers.length).setValues([headers].concat(allDataRows));
+    // 行数が減った場合に末尾の古い行をクリア
+    if (lastRow > newLastRow) {
+      sh.getRange(newLastRow + 1, 1, lastRow, sh.getLastColumn()).clearContent();
     }
 
     return { success: true };

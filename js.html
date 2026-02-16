@@ -4,6 +4,7 @@
     const mm = ('0' + (TODAY.getMonth()+1)).slice(-2);
     const dd = ('0' + TODAY.getDate()).slice(-2);
     const TODAY_STR = `${yyyy}-${mm}-${dd}`;
+    const CACHE_TTL_MS = 5 * 60 * 1000;
 
     let currentTab = 'homeroom';
     let initData = null; 
@@ -34,15 +35,17 @@
       const cachedInit = localStorage.getItem('app_init_data');
       if (cachedInit) {
         try {
-          const data = JSON.parse(cachedInit);
-          applyInitData(data);
+          const cached = JSON.parse(cachedInit);
+          if (cached.data && cached.fetchedAt && (Date.now() - cached.fetchedAt) < CACHE_TTL_MS) {
+            applyInitData(cached.data);
+          }
         } catch(e) { console.error('Cache Error', e); }
       }
 
       google.script.run.withSuccessHandler(data => {
-        localStorage.setItem('app_init_data', JSON.stringify(data));
+        localStorage.setItem('app_init_data', JSON.stringify({ data: data, fetchedAt: Date.now() }));
         applyInitData(data);
-      }).getInitialData();
+      }).withFailureHandler(onFailure).getInitialData();
 
       document.getElementById('hr-save-btn').addEventListener('click', saveHomeroom);
       document.getElementById('subj-save-btn').addEventListener('click', saveSubject);
@@ -69,24 +72,46 @@
         const tabs = document.querySelectorAll('.tab-btn');
         tabs.forEach(b => b.replaceWith(b.cloneNode(true))); 
         document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', e => {
-          if (Object.keys(hrEdits).length > 0 || Object.keys(subjEdits).length > 0 || calEdits) {
-             if(!confirm('保存されていない変更があります。移動しますか？')) return;
+          const targetTab = e.target.dataset.tab;
+          const hasUnsaved = Object.keys(hrEdits).length > 0 || Object.keys(subjEdits).length > 0 || calEdits;
+          if (hasUnsaved) {
+            window.pendingTabSwitch = targetTab;
+            document.getElementById('modal-content-input').style.display = 'none';
+            document.getElementById('modal-content-stats').style.display = 'none';
+            document.getElementById('modal-day-config').style.display = 'none';
+            document.getElementById('modal-subject-history').style.display = 'none';
+            document.getElementById('modal-tab-unsaved').style.display = 'block';
+            document.getElementById('modal-overlay').style.display = 'flex';
+            return;
           }
-
-          document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-          e.target.classList.add('active');
-          currentTab = e.target.dataset.tab;
-          document.getElementById('tab-homeroom').style.display = currentTab==='homeroom'?'block':'none';
-          document.getElementById('tab-subject').style.display = currentTab==='subject'?'block':'none';
-          document.getElementById('tab-settings').style.display = currentTab==='settings'?'block':'none';
-          
-          if (currentTab === 'subject' && !subjData) {
-            triggerDefaultSubjLoad();
-          }
-          if (currentTab === 'settings') {
-            loadCalendarSettings();
-          }
+          doTabSwitch(targetTab);
         }));
+
+        document.getElementById('tab-confirm-save-first').onclick = function() {
+          document.getElementById('modal-tab-unsaved').style.display = 'none';
+          document.getElementById('modal-overlay').style.display = 'none';
+          const targetTab = window.pendingTabSwitch;
+          window.pendingTabSwitch = null;
+          window.pendingTabAfterSave = targetTab;
+          if (currentTab === 'homeroom' && Object.keys(hrEdits).length > 0) saveHomeroom();
+          else if (currentTab === 'subject' && Object.keys(subjEdits).length > 0) saveSubject();
+          else if (currentTab === 'settings' && calEdits) saveCalendarBulk();
+          else doTabSwitch(targetTab);
+        };
+        document.getElementById('tab-confirm-discard').onclick = function() {
+          hrEdits = {}; subjEdits = {}; calEdits = false;
+          updateSaveBtnState();
+          const targetTab = window.pendingTabSwitch;
+          window.pendingTabSwitch = null;
+          document.getElementById('modal-tab-unsaved').style.display = 'none';
+          document.getElementById('modal-overlay').style.display = 'none';
+          doTabSwitch(targetTab);
+        };
+        document.getElementById('tab-confirm-cancel').onclick = function() {
+          window.pendingTabSwitch = null;
+          document.getElementById('modal-tab-unsaved').style.display = 'none';
+          document.getElementById('modal-overlay').style.display = 'none';
+        };
 
         if (data.initialHrData && !hrData) {
           hrData = data.initialHrData;
@@ -98,6 +123,18 @@
         }
         
         initSubjDropdowns();
+    }
+
+    function doTabSwitch(tabName) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      const tabBtn = document.querySelector('.tab-btn[data-tab="' + tabName + '"]');
+      if (tabBtn) tabBtn.classList.add('active');
+      currentTab = tabName;
+      document.getElementById('tab-homeroom').style.display = currentTab==='homeroom'?'block':'none';
+      document.getElementById('tab-subject').style.display = currentTab==='subject'?'block':'none';
+      document.getElementById('tab-settings').style.display = currentTab==='settings'?'block':'none';
+      if (currentTab === 'subject' && !subjData) triggerDefaultSubjLoad();
+      if (currentTab === 'settings') loadCalendarSettings();
     }
 
     function onFailure(e) {
@@ -123,6 +160,11 @@
 
     function renderSkeleton(containerId) {
        document.getElementById(containerId).innerHTML = `<div style="padding:20px; text-align:center;">読み込み中...</div>`;
+    }
+
+    function restoreSaveButton(btn, origText) {
+      if (btn) { btn.disabled = false; if (origText != null) btn.textContent = origText; }
+      updateSaveBtnState();
     }
 
     function updateSaveBtnState() {
@@ -353,11 +395,11 @@
       
       google.script.run.withSuccessHandler(() => {
         showToast('保存しました');
-        btn.disabled = false; btn.textContent = origText;
+        restoreSaveButton(btn, origText);
         loadMaster(currentMasterSheet);
       }).withFailureHandler(e => {
         showToast('Error: ' + e.message, true);
-        btn.disabled = false; btn.textContent = origText;
+        restoreSaveButton(btn, origText);
       }).saveMasterData(currentMasterSheet, currentMasterHeaders, currentMasterData);
     };
 
@@ -427,7 +469,7 @@
         calSettingsCache[cacheKey] = days;
         calSettingsData = days;
         renderCalendarSettingsTable(days);
-      }).getCalendarSettingsViewData(fetchYear, m);
+      }).withFailureHandler(onFailure).getCalendarSettingsViewData(fetchYear, m);
     }
 
     function renderCalendarSettingsTable(days) {
@@ -566,18 +608,20 @@
       });
       
       const btn = document.getElementById('cal-bulk-save-btn');
+      const origCalText = btn.textContent;
       btn.disabled = true; btn.textContent = '保存中...';
       google.script.run
         .withSuccessHandler(() => {
           showToast('設定を保存しました。');
           calEdits = false;
           calSettingsCache = {};
-          updateSaveBtnState();
+          restoreSaveButton(btn, origCalText);
           if (currentTab === 'homeroom') loadHomeroom();
           else if (currentTab === 'subject') loadSubject();
           else if (currentTab === 'settings') loadCalendarSettings();
+          if (window.pendingTabAfterSave) { doTabSwitch(window.pendingTabAfterSave); window.pendingTabAfterSave = null; }
         })
-        .withFailureHandler(onFailure)
+        .withFailureHandler(e => { onFailure(e); restoreSaveButton(btn, origCalText); })
         .saveCalendarBulk(records);
     }
 
@@ -670,8 +714,10 @@
       if (cachedHr) {
         try {
           var parsed = JSON.parse(cachedHr);
-          if (parsed.attendanceYearly && Array.isArray(parsed.attendanceYearly)) {
-            hrData = parsed;
+          var payload = parsed.data || parsed;
+          var cacheValid = (parsed.fetchedAt && (Date.now() - parsed.fetchedAt) < CACHE_TTL_MS) || !parsed.fetchedAt;
+          if (cacheValid && payload && payload.attendanceYearly && Array.isArray(payload.attendanceYearly)) {
+            hrData = payload;
             var key = hr.grade + '_' + hr.class;
             if (lastHrDaysYearlyByClass[key]) hrData.daysYearly = lastHrDaysYearlyByClass[key];
             hrEdits = {};
@@ -687,13 +733,13 @@
       updateSaveBtnState();
 
       google.script.run.withSuccessHandler(function(data) {
-        localStorage.setItem(cacheKey, JSON.stringify(data));
+        localStorage.setItem(cacheKey, JSON.stringify({ data: data, fetchedAt: Date.now() }));
         hrData = data;
         var key = hr.grade + '_' + hr.class;
         if (lastHrDaysYearlyByClass[key]) hrData.daysYearly = lastHrDaysYearlyByClass[key];
         renderHomeroomTable();
         ensureHrDaysYearly();
-      }).getHomeroomViewData({grade:hr.grade, className:hr.class, year:hrState.year, month:hrState.month});
+      }).withFailureHandler(onFailure).getHomeroomViewData({grade:hr.grade, className:hr.class, year:hrState.year, month:hrState.month});
     }
 
     function ensureHrDaysYearly() {
@@ -706,22 +752,28 @@
         lastHrDaysYearlyByClass[key] = arr;
         hrData.daysYearly = arr;
         renderHomeroomTable();
-      }).getHomeroomYearlyCalendar(hr.grade, hr.class);
+      }).withFailureHandler(onFailure).getHomeroomYearlyCalendar(hr.grade, hr.class);
     }
 
-    // Event Delegation
+    // Event Delegation（スクロール位置を保存して返す）
     function setupTableDelegation(containerId, handler) {
        const con = document.getElementById(containerId);
+       const savedScrollTop = con.scrollTop;
+       const savedScrollLeft = con.scrollLeft;
        const newCon = con.cloneNode(false);
        con.parentNode.replaceChild(newCon, con);
        newCon.addEventListener('click', (e) => {
          const btn = e.target.closest('.cell-action');
          if(btn && !btn.disabled) {
+           e.preventDefault();
            handler(btn.dataset);
+           if (btn.blur) btn.blur();
          }
          const menu = e.target.closest('.menu-action');
          if(menu) {
+           e.preventDefault();
            handler(menu.dataset, true);
+           if (menu.blur) menu.blur();
          }
          const name = e.target.closest('.name-action');
          if(name) {
@@ -733,21 +785,22 @@
              openDayConfig(header.dataset.date);
          }
        });
-       return newCon;
+       return { el: newCon, scrollTop: savedScrollTop, scrollLeft: savedScrollLeft };
     }
 
     function renderHomeroomTable() {
       if (!hrData) return;
-      const con = setupTableDelegation('hr-table-wrapper', (ds, isMenu) => {
+      const delegation = setupTableDelegation('hr-table-wrapper', (ds, isMenu) => {
          if(isMenu) openModal(ds.date, ds.number);
          else toggleHrStatus(ds.date, ds.number);
       });
-      
+      const con = delegation.el;
+
       const days = hrData.days;
       const students = hrData.students;
       let h = '<table><thead><tr>';
       h += '<th rowspan="2" class="col-fixed-name">氏名</th>';
-      h += '<th rowspan="2" class="col-fixed-stat">欠/遅/早/忌/感/公</th>';
+      h += '<th rowspan="2" class="col-fixed-stat">欠/遅/早/忌/感/公/停</th>';
       days.forEach(d => {
          let thClass = '';
          if(d.date === TODAY_STR) thClass = 'today-col';
@@ -777,7 +830,7 @@
 
       // 欠/遅/早/忌/感/公は年度累積で集計
       const statsMap = {};
-      students.forEach(s => statsMap[s.number] = { absent:0, late:0, early:0, mourn:0, inf:0, infection:0 });
+      students.forEach(s => statsMap[s.number] = { absent:0, late:0, early:0, mourn:0, inf:0, infection:0, stop:0 });
       var yearStart = (initData.semesters && initData.semesters[0]) ? initData.semesters[0].start : null;
       var yearEnd = (initData.semesters && initData.semesters.length > 0) ? initData.semesters[initData.semesters.length - 1].end : null;
       var sourceAtt = (hrData.attendanceYearly && Array.isArray(hrData.attendanceYearly)) ? hrData.attendanceYearly : hrData.attendance;
@@ -802,6 +855,7 @@
          else if (s === '忌引') st.mourn++;
          else if (s === '公欠') st.inf++;
          else if (s === '感染症') st.infection++;
+         else if (s === '出席停止') st.stop++;
       });
 
       students.forEach(st => {
@@ -816,6 +870,7 @@
              <span>忌:<b class="stat-val">${stats.mourn}</b></span>
              <span>感:<b class="stat-val">${stats.infection}</b></span>
              <span>公:<b class="stat-val">${stats.inf}</b></span>
+             <span>停:<b class="stat-val">${stats.stop}</b></span>
           </div>
         </td>`;
 
@@ -831,6 +886,7 @@
           else if (stVal === '忌引') { lbl='忌'; cls='st-mourn'; }
           else if (stVal === '公欠') { lbl='公'; cls='st-inf'; }
           else if (stVal === '感染症') { lbl='感'; cls='st-infection'; }
+          else if (stVal === '出席停止') { lbl='停'; cls='st-stop'; }
           
           let tdClass = '';
           let inner = '';
@@ -852,6 +908,8 @@
       });
       h += '</tbody></table>';
       con.innerHTML = h;
+      con.scrollTop = delegation.scrollTop;
+      con.scrollLeft = delegation.scrollLeft;
     }
 
     function toggleHrStatus(date, num) {
@@ -901,6 +959,7 @@
             <tr><td>忌引</td><td class="modal-stats-num">${stats.mourn}</td></tr>
             <tr><td>感染症</td><td class="modal-stats-num">${stats.infection}</td></tr>
             <tr><td>公欠</td><td class="modal-stats-num">${stats.inf}</td></tr>
+            <tr><td>出席停止</td><td class="modal-stats-num">${stats.stop}</td></tr>
           </tbody>
         </table>
         <div style="font-weight:bold; margin-top:16px; margin-bottom:8px;">[科目別欠課 (年度累積)]</div>
@@ -940,7 +999,7 @@
 
     function calcStats(num, attMap, daysForYear) {
       var days = (daysForYear && daysForYear.length) ? daysForYear : (hrData.days || []);
-      let res = { absent:0, late:0, early:0, mourn:0, inf:0, infection:0 };
+      let res = { absent:0, late:0, early:0, mourn:0, inf:0, infection:0, stop:0 };
       Object.keys(attMap).forEach(k => {
          if (!k.endsWith('__'+num)) return;
          const date = k.split('__')[0];
@@ -954,6 +1013,7 @@
          else if (s === '忌引') res.mourn++;
          else if (s === '公欠') res.inf++;
          else if (s === '感染症') res.infection++;
+         else if (s === '出席停止') res.stop++;
       });
       return res;
     }
@@ -974,7 +1034,7 @@
          classes.forEach(c => {
            if (validPeriods && !validPeriods.includes(c.period)) return;
            let isAbs = false;
-           if (['欠席','忌引','公欠','感染症'].includes(status)) isAbs = true;
+           if (['欠席','忌引','公欠','感染症','出席停止'].includes(status)) isAbs = true;
            else if (['遅刻','早退','遅刻早退'].includes(status)) {
              const pList = String(rec.periods||'').split(',').map(Number);
              if (pList.includes(c.period)) isAbs = true;
@@ -989,8 +1049,12 @@
     let currentEditKey = null;
     let selectedStatusSet = new Set(); 
 
-    function openModal(date, num) {
-      currentEditKey = `${date}__${num}`;
+    function openModal(date, num, periodOpt) {
+      if (currentTab === 'subject' && periodOpt !== undefined && periodOpt !== '') {
+        currentEditKey = `${date}__${periodOpt}__${num}`;
+      } else {
+        currentEditKey = `${date}__${num}`;
+      }
       const dayInfo = (currentTab === 'homeroom' ? hrData : subjData).days.find(d => d.date === date);
       const validPeriods = dayInfo ? dayInfo.validPeriods : null;
 
@@ -1000,7 +1064,8 @@
       else Object.assign(attMap, source);
       
       Object.assign(attMap, (currentTab === 'homeroom' ? hrEdits : subjEdits));
-      const rec = attMap[currentEditKey] || {};
+      let rec = attMap[currentEditKey] || {};
+      if (currentTab === 'subject' && typeof rec === 'string') rec = { status: rec };
       const stName = (currentTab === 'homeroom' ? hrData : subjData).students.find(s=>String(s.number)===String(num)).name;
 
       document.getElementById('modal-content-input').style.display = 'block';
@@ -1013,13 +1078,19 @@
       document.getElementById('modal-date-label').textContent = date;
       document.getElementById('input-memo').value = rec.memo || '';
       selectedStatusSet.clear();
-      const stat = rec.status || '出席';
-      if (stat === '遅刻早退') {
-        selectedStatusSet.add('遅刻'); selectedStatusSet.add('早退');
-      } else if (stat !== '出席') {
-        selectedStatusSet.add(stat);
+      let stat = rec.status || '出席';
+      if (currentTab === 'subject') {
+        if (stat === '欠課' || stat === '欠席') selectedStatusSet.add('欠席');
+        else if (stat === '公欠') selectedStatusSet.add('公欠');
+        else selectedStatusSet.add('出席');
       } else {
-        selectedStatusSet.add('出席');
+        if (stat === '遅刻早退') {
+          selectedStatusSet.add('遅刻'); selectedStatusSet.add('早退');
+        } else if (stat !== '出席') {
+          selectedStatusSet.add(stat);
+        } else {
+          selectedStatusSet.add('出席');
+        }
       }
       updateModalBtns();
 
@@ -1055,6 +1126,7 @@
          if (selectedStatusSet.has('忌引')) selectedStatusSet.clear();
          if (selectedStatusSet.has('公欠')) selectedStatusSet.clear();
          if (selectedStatusSet.has('感染症')) selectedStatusSet.clear();
+         if (selectedStatusSet.has('出席停止')) selectedStatusSet.clear();
          if (selectedStatusSet.has(val)) selectedStatusSet.delete(val);
          else selectedStatusSet.add(val);
          if (selectedStatusSet.size === 0) selectedStatusSet.add('出席');
@@ -1062,7 +1134,7 @@
          selectedStatusSet.clear(); selectedStatusSet.add(val);
        }
        updateModalBtns();
-       if (['遅刻','早退','忌引','公欠','感染症'].includes(val) && selectedStatusSet.has(val)) {
+         if (['遅刻','早退','忌引','公欠','感染症','出席停止'].includes(val) && selectedStatusSet.has(val)) {
            document.querySelectorAll('#modal-period-checks input:not(:disabled)').forEach(c => {
              c.checked = true; c.parentElement.classList.add('checked');
            });
@@ -1097,8 +1169,12 @@
            hrEdits[currentEditKey] = { date:d, number:n, status:finalStatus, periods:ps.join(','), memo:memo };
            updateSaveBtnState();
            renderHomeroomTable();
-       } else {
-           // 教科担任用は通常タップ操作
+       } else if (currentTab === 'subject' && currentEditKey && currentEditKey.split('__').length >= 3) {
+           const parts = currentEditKey.split('__');
+           const subjStatus = (finalStatus === '公欠') ? '公欠' : (finalStatus === '出席') ? '出席' : '欠課';
+           subjEdits[currentEditKey] = subjStatus;
+           updateSaveBtnState();
+           renderSubjectTable();
        }
        closeModal();
     }
@@ -1107,15 +1183,20 @@
        const recs = Object.values(hrEdits);
        if (!recs.length) return showToast('変更なし');
        const btn = document.getElementById('hr-save-btn');
+       const origText = btn.textContent;
        btn.disabled=true; btn.textContent='保存中...';
        const hr = initData.config.HR;
        google.script.run
          .withSuccessHandler(()=>{
            showToast('保存完了');
-           hrEdits = {}; updateSaveBtnState();
+           hrEdits = {};
+           restoreSaveButton(btn, origText);
+           var cacheKey = 'app_hr_' + hr.grade + '_' + hr.class + '_' + hrState.year + '_' + hrState.month;
+           localStorage.removeItem(cacheKey);
            loadHomeroom();
+           if (window.pendingTabAfterSave) { doTabSwitch(window.pendingTabAfterSave); window.pendingTabAfterSave = null; }
          })
-         .withFailureHandler(onFailure)
+         .withFailureHandler(e => { onFailure(e); restoreSaveButton(btn, origText); })
          .saveHomeroomAttendance({grade:hr.grade, className:hr.class, records:recs});
     }
 
@@ -1314,14 +1395,20 @@
         google.script.run
         .withSuccessHandler(() => {
           showToast('設定を変更しました');
-          btn.textContent = orig; btn.disabled=false;
+          restoreSaveButton(btn, orig);
           closeModal();
-          if (currentTab === 'homeroom') loadHomeroom();
-          else loadSubject();
+          if (currentTab === 'homeroom') {
+            localStorage.removeItem('app_hr_' + initData.config.HR.grade + '_' + initData.config.HR.class + '_' + hrState.year + '_' + hrState.month);
+            loadHomeroom();
+          } else {
+            var g = document.getElementById('subj-grade').value, c = document.getElementById('subj-class').value;
+            localStorage.removeItem('app_subj_' + g + '_' + c + '_' + currentSubjId + '_' + subjState.year + '_' + subjState.month);
+            loadSubject();
+          }
         })
         .withFailureHandler(e => {
           showToast('Error: '+e.message, true);
-          btn.textContent = orig; btn.disabled=false;
+          restoreSaveButton(btn, orig);
         })
         .saveDayConfiguration(calendarRecord, timetableChanges, grade, cls);
     }
@@ -1356,7 +1443,7 @@
            });
            h += '</tbody></table>';
            listEl.innerHTML = h;
-        }).getStudentSubjectAbsenceHistory(g, c, sId, num);
+        }).withFailureHandler(e => { listEl.innerHTML = '<div style="padding:10px; color:red;">読み込みエラー: ' + e.message + '</div>'; }).getStudentSubjectAbsenceHistory(g, c, sId, num);
     }
 
     function initSubjDropdowns() {
@@ -1428,30 +1515,36 @@
        const cachedSubj = localStorage.getItem(cacheKey);
        if (cachedSubj) {
            try {
-             subjData = JSON.parse(cachedSubj);
-             subjEdits = {};
-             updateSaveBtnState();
-             renderSubjectTable();
+             var parsedSubj = JSON.parse(cachedSubj);
+             var subjCacheValid = parsedSubj.fetchedAt && (Date.now() - parsedSubj.fetchedAt) < CACHE_TTL_MS;
+             var subjPayload = parsedSubj.data || parsedSubj;
+             if (subjCacheValid && subjPayload && subjPayload.days) {
+               subjData = subjPayload;
+               subjEdits = {};
+               updateSaveBtnState();
+               renderSubjectTable();
+               return;
+             }
            } catch(e) {}
-       } else {
-           renderSkeleton('subj-table-wrapper');
        }
-
+       renderSkeleton('subj-table-wrapper');
        subjEdits = {};
        updateSaveBtnState();
        google.script.run.withSuccessHandler(data => {
-          localStorage.setItem(cacheKey, JSON.stringify(data));
+          localStorage.setItem(cacheKey, JSON.stringify({ data: data, fetchedAt: Date.now() }));
           subjData = data;
           renderSubjectTable();
-       }).getSubjectMonthData({grade:g, className:c, subjectId:s, year:subjState.year, month:subjState.month});
+       }).withFailureHandler(onFailure).getSubjectMonthData({grade:g, className:c, subjectId:s, year:subjState.year, month:subjState.month});
     }
 
     function renderSubjectTable() {
        if (!subjData) return;
-       const con = setupTableDelegation('subj-table-wrapper', (ds) => {
-          toggleSubj(ds.date, ds.period, ds.number);
+       const delegation = setupTableDelegation('subj-table-wrapper', (ds, isMenu) => {
+          if (isMenu) openModal(ds.date, ds.number, ds.period);
+          else toggleSubj(ds.date, ds.period, ds.number);
        });
-       
+       const con = delegation.el;
+
        if (subjData.remainingClasses !== undefined) {
            document.getElementById('subj-remaining-info').textContent = `今学期の残り授業数（今日以降）: ${subjData.remainingClasses} 回`;
        }
@@ -1513,7 +1606,8 @@
                inner = `<div class="cell-wrapper"><div class="cell-status st-noclass">-</div></div>`;
              } else {
                inner = `<div class="cell-wrapper">
-                 <button class="cell-btn ${cls} cell-action" data-date="${d.date}" data-period="${d.period}" data-number="${st.number}">${lbl}</button>
+                 <div class="cell-status ${cls} cell-action" data-date="${d.date}" data-period="${d.period}" data-number="${st.number}">${lbl}</div>
+                 <div class="cell-menu menu-action" data-date="${d.date}" data-period="${d.period}" data-number="${st.number}">▼</div>
                </div>`;
              }
              h += `<td class="${tdClass}">${inner}</td>`;
@@ -1522,6 +1616,8 @@
        });
        h += '</tbody></table>';
        con.innerHTML = h;
+       con.scrollTop = delegation.scrollTop;
+       con.scrollLeft = delegation.scrollLeft;
     }
     
     function toggleSubj(d, p, n) {
@@ -1544,14 +1640,21 @@
        });
        if (!recs.length) return showToast('変更なし');
        const btn = document.getElementById('subj-save-btn');
+       const origSubjText = btn.textContent;
        btn.disabled=true; btn.textContent='保存中...';
        google.script.run
          .withSuccessHandler(()=>{
             showToast('保存完了');
-            subjEdits = {}; updateSaveBtnState();
+            subjEdits = {};
+            restoreSaveButton(btn, origSubjText);
+            var g = document.getElementById('subj-grade').value;
+            var c = document.getElementById('subj-class').value;
+            var cacheKey = 'app_subj_' + g + '_' + c + '_' + currentSubjId + '_' + subjState.year + '_' + subjState.month;
+            localStorage.removeItem(cacheKey);
             loadSubject();
+            if (window.pendingTabAfterSave) { doTabSwitch(window.pendingTabAfterSave); window.pendingTabAfterSave = null; }
          })
-         .withFailureHandler(onFailure)
+         .withFailureHandler(e => { onFailure(e); restoreSaveButton(btn, origSubjText); })
          .saveSubjectAttendance({
             grade:document.getElementById('subj-grade').value,
             className:document.getElementById('subj-class').value,

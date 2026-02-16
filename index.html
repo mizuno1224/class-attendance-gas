@@ -9,7 +9,7 @@
 </head>
 
 <body>
-  <header class="app-header">出席管理 Ver29</header>
+  <header class="app-header">出席管理 Ver<?= APP_VERSION ?></header>
 
   <div class="tab-row">
     <div class="tab-btn active" data-tab="homeroom">クラス担任</div>
@@ -116,6 +116,7 @@
           <button class="opt-btn" data-val="忌引">忌引</button>
           <button class="opt-btn" data-val="感染症">感染症</button>
           <button class="opt-btn" data-val="公欠">公欠</button>
+          <button class="opt-btn" data-val="出席停止">出席停止</button>
         </div>
         <div id="detail-periods" style="display:none;">
           <div style="font-size:12px; font-weight:bold; margin-bottom:4px;">欠課時限を選択</div>
@@ -167,6 +168,16 @@
        </div>
        <div style="display:flex; justify-content:flex-end;">
           <button class="btn" onclick="closeModal()">閉じる</button>
+       </div>
+    </div>
+
+    <div id="modal-tab-unsaved" class="modal" style="display:none;">
+       <h3 style="margin:0 0 12px 0;">保存されていない変更があります</h3>
+       <p style="font-size:13px; color:#666; margin-bottom:16px;">どうしますか？</p>
+       <div style="display:flex; flex-direction:column; gap:8px;">
+          <button class="btn" id="tab-confirm-save-first">保存してから移動</button>
+          <button class="btn" style="background:#dc2626;" id="tab-confirm-discard">破棄して移動（変更は破棄されます）</button>
+          <button class="btn" style="background:#6b7280;" id="tab-confirm-cancel">キャンセル</button>
        </div>
     </div>
   </div>
