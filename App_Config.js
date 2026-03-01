@@ -73,12 +73,15 @@ function getInitialData() {
     subjectName: String(s.subjectId) // IDを名前として使用
   }));
 
+  const lastUpdated = PropertiesService.getScriptProperties().getProperty('attendance_last_updated') || null;
+
   return {
     config,
     semesters,
     initialDate: { year, month },
     initialHrData,
-    allSubjects
+    allSubjects,
+    lastUpdated
   };
 }
 

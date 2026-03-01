@@ -115,7 +115,9 @@ function saveAttendanceCommon_(sheetName, payload, headerList) {
       sh.getRange(newLastRow + 1, 1, lastRow, sh.getLastColumn()).clearContent();
     }
 
-    return { success: true };
+    const lastUpdated = new Date().toISOString();
+    PropertiesService.getScriptProperties().setProperty('attendance_last_updated', lastUpdated);
+    return { success: true, lastUpdated: lastUpdated };
 
   } catch (e) {
     throw e;

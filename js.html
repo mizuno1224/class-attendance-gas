@@ -15,7 +15,8 @@
     let currentSubjId = null;
     let calSettingsData = []; 
     let calEdits = false;
-    let calSettingsState = { year: TODAY.getFullYear(), month: TODAY.getMonth() + 1 };
+    var _calMonth = TODAY.getMonth() + 1;
+    let calSettingsState = { month: _calMonth };
     let calSettingsCache = {};
     var lastHrDaysYearlyByClass = {};
 
@@ -55,9 +56,28 @@
       document.getElementById('subj-class').addEventListener('change', onSubjClassChange);
     }
 
+    function formatLastUpdated(isoStr) {
+      if (!isoStr) return '—';
+      try {
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return '—';
+        const y = d.getFullYear();
+        const m = ('0' + (d.getMonth() + 1)).slice(-2);
+        const day = ('0' + d.getDate()).slice(-2);
+        const h = ('0' + d.getHours()).slice(-2);
+        const min = ('0' + d.getMinutes()).slice(-2);
+        return y + '/' + m + '/' + day + ' ' + h + ':' + min;
+      } catch (e) { return '—'; }
+    }
+    function setLastUpdatedDisplay(isoStr) {
+      const el = document.getElementById('app-last-updated');
+      if (el) el.textContent = '最終更新: ' + formatLastUpdated(isoStr);
+    }
+
     function applyInitData(data) {
         initData = data;
-        
+        setLastUpdatedDisplay(data.lastUpdated || null);
+
         if(document.getElementById('hr-semester-btns').children.length === 0) {
             const y = data.initialDate.year;
             const m = data.initialDate.month;
@@ -121,7 +141,25 @@
           updateMonthTabs('hr-month-tabs', hrState, loadHomeroom);
           loadHomeroom();
         }
-        
+
+        document.querySelectorAll('.hr-sub-tab-btn').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            var sub = this.getAttribute('data-hr-sub');
+            document.querySelectorAll('.hr-sub-tab-btn').forEach(function(b) { b.classList.remove('active'); });
+            this.classList.add('active');
+            document.getElementById('hr-sub-input').style.display = sub === 'input' ? 'block' : 'none';
+            document.getElementById('hr-sub-summary').style.display = sub === 'summary' ? 'flex' : 'none';
+          });
+        });
+
+        document.querySelectorAll('.settings-tab-btn').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            document.querySelectorAll('.settings-tab-btn').forEach(function(b) { b.classList.remove('active'); });
+            this.classList.add('active');
+            onSettingsModeChange(this.getAttribute('data-settings'));
+          });
+        });
+
         initSubjDropdowns();
     }
 
@@ -130,11 +168,15 @@
       const tabBtn = document.querySelector('.tab-btn[data-tab="' + tabName + '"]');
       if (tabBtn) tabBtn.classList.add('active');
       currentTab = tabName;
-      document.getElementById('tab-homeroom').style.display = currentTab==='homeroom'?'block':'none';
+      document.getElementById('tab-homeroom').style.display = currentTab==='homeroom'?'flex':'none';
       document.getElementById('tab-subject').style.display = currentTab==='subject'?'block':'none';
       document.getElementById('tab-settings').style.display = currentTab==='settings'?'block':'none';
       if (currentTab === 'subject' && !subjData) triggerDefaultSubjLoad();
-      if (currentTab === 'settings') loadCalendarSettings();
+      if (currentTab === 'settings') {
+        var activeSettingsBtn = document.querySelector('.settings-tab-btn.active');
+        var settingsMode = activeSettingsBtn ? activeSettingsBtn.getAttribute('data-settings') : 'calendar';
+        onSettingsModeChange(settingsMode);
+      }
     }
 
     function onFailure(e) {
@@ -211,17 +253,20 @@
     let currentMasterHeaders = [];
     let currentMasterData = [];
 
-    function onSettingsModeChange() {
-      const mode = document.getElementById('settings-mode-select').value;
-      const isCal = (mode === 'calendar');
+    function onSettingsModeChange(mode) {
+      if (!mode) mode = 'calendar';
+      var isCal = (mode === 'calendar');
       document.getElementById('settings-ui-calendar').style.display = isCal ? 'block' : 'none';
       document.getElementById('cal-settings-table-wrapper').style.display = isCal ? 'block' : 'none';
-      
-      document.getElementById('settings-ui-master').style.display = !isCal ? 'block' : 'none';
-      
-      const isTT = (mode === 'timetable');
-      document.getElementById('master-toolbar-generic').style.display = isTT ? 'none' : 'flex';
-      document.getElementById('master-toolbar-timetable').style.display = isTT ? 'flex' : 'none';
+
+      var masterUi = document.getElementById('settings-ui-master');
+      if (masterUi) masterUi.style.display = !isCal ? 'block' : 'none';
+
+      var isTT = (mode === 'timetable');
+      var genToolbar = document.getElementById('master-toolbar-generic');
+      var ttToolbar = document.getElementById('master-toolbar-timetable');
+      if (genToolbar) genToolbar.style.display = isTT ? 'none' : 'flex';
+      if (ttToolbar) ttToolbar.style.display = isTT ? 'flex' : 'none';
       document.getElementById('master-table-wrapper').style.display = (!isCal && !isTT) ? 'block' : 'none';
       document.getElementById('timetable-grid-wrapper').style.display = isTT ? 'block' : 'none';
       if (isCal) {
@@ -403,27 +448,20 @@
       }).saveMasterData(currentMasterSheet, currentMasterHeaders, currentMasterData);
     };
 
-    // --- Calendar Settings Logic ---
+    // --- Calendar Settings Logic（年度＝4月～翌3月、常に「今の年度」で表示）---
+    function getCurrentAcademicYearStart() {
+      var m = TODAY.getMonth() + 1;
+      return m >= 4 ? TODAY.getFullYear() : TODAY.getFullYear() - 1;
+    }
+
     function ensureCalYearMonthUI() {
-      var yearSel = document.getElementById('cal-setting-year');
       var monthCon = document.getElementById('cal-month-btns');
-      if (!yearSel || !monthCon) return;
-      if (yearSel.options.length === 0) {
-        var y0 = TODAY.getFullYear();
-        for (var y = y0 - 1; y <= y0 + 2; y++) {
-          var opt = document.createElement('option');
-          opt.value = y;
-          opt.textContent = y + '年';
-          if (y === calSettingsState.year) opt.selected = true;
-          yearSel.appendChild(opt);
-        }
-        yearSel.onchange = function() {
-          calSettingsState.year = parseInt(yearSel.value, 10);
-          loadCalendarSettings();
-        };
-      }
+      var yearLabel = document.getElementById('cal-current-year-label');
+      if (!monthCon) return;
+      var acYear = getCurrentAcademicYearStart();
+      if (yearLabel) yearLabel.textContent = acYear + '年度';
       if (monthCon.children.length === 0) {
-        var monthOrder = [4,5,6,7,8,9,10,11,12,1,2,3];
+        var monthOrder = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
         monthOrder.forEach(function(m) {
           var btn = document.createElement('button');
           btn.type = 'button';
@@ -443,23 +481,18 @@
         monthCon.querySelectorAll('.cal-month-btn').forEach(function(b) {
           b.classList.toggle('active', parseInt(b.dataset.month, 10) === calSettingsState.month);
         });
-        var opts = yearSel.options;
-        for (var i = 0; i < opts.length; i++) {
-          if (parseInt(opts[i].value, 10) === calSettingsState.year) { yearSel.selectedIndex = i; break; }
-        }
       }
     }
 
     function loadCalendarSettings() {
-      var mode = document.getElementById('settings-mode-select').value;
-      if (mode !== 'calendar') return;
       ensureCalYearMonthUI();
-      var y = calSettingsState.year, m = calSettingsState.month;
-      var fetchYear = m >= 4 ? y : y + 1;
+      var m = calSettingsState.month;
+      var acYearStart = getCurrentAcademicYearStart();
+      var fetchYear = m >= 4 ? acYearStart : acYearStart + 1;
       var cacheKey = fetchYear + '-' + m;
       if (calSettingsCache[cacheKey]) {
         calSettingsData = calSettingsCache[cacheKey];
-        renderCalendarSettingsTable(calSettingsData);
+        renderCalendarSettingsTable(calSettingsData, fetchYear, m);
         return;
       }
       renderSkeleton('cal-settings-table-wrapper');
@@ -468,12 +501,13 @@
       google.script.run.withSuccessHandler(function(days) {
         calSettingsCache[cacheKey] = days;
         calSettingsData = days;
-        renderCalendarSettingsTable(days);
+        renderCalendarSettingsTable(days, fetchYear, m);
       }).withFailureHandler(onFailure).getCalendarSettingsViewData(fetchYear, m);
     }
 
-    function renderCalendarSettingsTable(days) {
-      let h = `<table><thead>
+    function renderCalendarSettingsTable(days, displayYear, displayMonth) {
+      var caption = (displayYear && displayMonth) ? '<p style="font-size:12px; color:#666; margin-bottom:6px;">表示: ' + displayYear + '年' + displayMonth + '月（' + (displayMonth >= 4 ? '同年度' : '翌年') + '）</p>' : '';
+      let h = caption + `<table><thead>
         <tr>
           <th class="th-fixed-date">日付</th>
           <th style="width:50px;">登校</th>
@@ -492,7 +526,8 @@
         else if (d.dow === 0 || d.isHoliday) trStyle = 'background:#fee2e2;'; 
         else if (d.dow === 6) trStyle = 'background:#dbeafe;'; 
         
-        const dateLabel = `${parseInt(d.date.slice(-2))}(${['日','月','火','水','木','金','土'][d.dow]})`;
+        var dayNum = parseInt(d.date.slice(-2), 10);
+        var dateLabel = (displayMonth <= 3 && displayYear) ? (displayYear + '/' + displayMonth + '/' + dayNum + '(' + ['日','月','火','水','木','金','土'][d.dow] + ')') : (dayNum + '(' + ['日','月','火','水','木','金','土'][d.dow] + ')');
         let periodBtns = '';
         
         const vp = d.validPeriods || [];
@@ -798,26 +833,25 @@
 
       const days = hrData.days;
       const students = hrData.students;
-      let h = '<table><thead><tr>';
+      let h = '<table class="attendance-table"><thead><tr>';
       h += '<th rowspan="2" class="col-fixed-name">氏名</th>';
-      h += '<th rowspan="2" class="col-fixed-stat">欠/遅/早/忌/感/公/停</th>';
       days.forEach(d => {
-         let thClass = '';
-         if(d.date === TODAY_STR) thClass = 'today-col';
-         else if(d.dow === 0) thClass = 'th-sun';
-         else if(d.dow === 6) thClass = 'th-sat';
-         else if(!d.isSchoolday) thClass = 'th-holiday';
+         let thClass = 'col-day';
+         if(d.date === TODAY_STR) thClass += ' today-col';
+         else if(d.dow === 0) thClass += ' th-sun';
+         else if(d.dow === 6) thClass += ' th-sat';
+         else if(!d.isSchoolday) thClass += ' th-holiday';
          h += `<th class="${thClass} th-clickable" data-date="${d.date}" style="cursor:pointer;" title="設定">${parseInt(d.date.slice(-2))}<br>${['日','月','火','水','木','金','土'][d.dow]}</th>`;
       });
       h += '</tr><tr>';
       days.forEach(d => {
          const status = getDayStatusLabel(d);
-         let thClass = '';
-         if(d.date === TODAY_STR) thClass = 'today-col';
-         else if(d.dow === 0) thClass = 'th-sun';
-         else if(d.dow === 6) thClass = 'th-sat';
-         else if(!d.isSchoolday) thClass = 'th-holiday';
-         h += `<th class="${thClass}" style="font-weight:normal; font-size:10px;">${status}</th>`;
+         let thClass = 'col-day';
+         if(d.date === TODAY_STR) thClass += ' today-col';
+         else if(d.dow === 0) thClass += ' th-sun';
+         else if(d.dow === 6) thClass += ' th-sat';
+         else if(!d.isSchoolday) thClass += ' th-holiday';
+         h += `<th class="${thClass}" style="font-weight:normal;">${status}</th>`;
       });
       h += '</tr></thead><tbody>';
 
@@ -861,18 +895,6 @@
       students.forEach(st => {
         h += '<tr>';
         h += `<td class="col-fixed-name name-action" data-number="${st.number}">${st.number}.${st.name}</td>`;
-        const stats = statsMap[st.number];
-        h += `<td class="col-fixed-stat">
-          <div class="stat-summary">
-             <span>欠:<b class="stat-val">${stats.absent}</b></span>
-             <span>遅:<b class="stat-val">${stats.late}</b></span>
-             <span>早:<b class="stat-val">${stats.early}</b></span>
-             <span>忌:<b class="stat-val">${stats.mourn}</b></span>
-             <span>感:<b class="stat-val">${stats.infection}</b></span>
-             <span>公:<b class="stat-val">${stats.inf}</b></span>
-             <span>停:<b class="stat-val">${stats.stop}</b></span>
-          </div>
-        </td>`;
 
         days.forEach(d => {
           const key = `${d.date}__${st.number}`;
@@ -902,7 +924,7 @@
             </div>`;
           }
           if (d.date === TODAY_STR) tdClass = 'today-col';
-          h += `<td class="${tdClass}">${inner}</td>`;
+          h += `<td class="col-day ${tdClass}">${inner}</td>`;
         });
         h += '</tr>';
       });
@@ -910,6 +932,18 @@
       con.innerHTML = h;
       con.scrollTop = delegation.scrollTop;
       con.scrollLeft = delegation.scrollLeft;
+
+      var semesterStatsMap = [];
+      if (initData.semesters && initData.semesters.length) {
+        initData.semesters.forEach(function(sem) {
+          var m = {};
+          students.forEach(function(st) {
+            m[st.number] = calcStatsInRange(st.number, yearlyMap, daysForStats, sem.start, sem.end);
+          });
+          semesterStatsMap.push(m);
+        });
+      }
+      renderSummaryTable(students, statsMap, semesterStatsMap, initData.semesters);
     }
 
     function toggleHrStatus(date, num) {
@@ -1016,6 +1050,74 @@
          else if (s === '出席停止') res.stop++;
       });
       return res;
+    }
+
+    function calcStatsInRange(num, attMap, days, start, end) {
+      if (!days || !days.length) return { absent:0, late:0, early:0, mourn:0, inf:0, infection:0, stop:0 };
+      let res = { absent:0, late:0, early:0, mourn:0, inf:0, infection:0, stop:0 };
+      Object.keys(attMap).forEach(k => {
+        if (!k.endsWith('__' + num)) return;
+        const date = k.split('__')[0].slice(0, 10);
+        if (date < start || date > end) return;
+        const dayInfo = days.find(d => String(d.date).slice(0, 10) === date);
+        if (dayInfo && !dayInfo.isSchoolday) return;
+        const s = attMap[k].status;
+        if (s === '欠席') res.absent++;
+        else if (s === '遅刻') res.late++;
+        else if (s === '早退') res.early++;
+        else if (s === '遅刻早退') { res.late++; res.early++; }
+        else if (s === '忌引') res.mourn++;
+        else if (s === '公欠') res.inf++;
+        else if (s === '感染症') res.infection++;
+        else if (s === '出席停止') res.stop++;
+      });
+      return res;
+    }
+
+    function formatDateRange(startStr, endStr) {
+      if (!startStr || !endStr) return '—';
+      var s = String(startStr).slice(0, 10).replace(/-/g, '/');
+      var e = String(endStr).slice(0, 10).replace(/-/g, '/');
+      return s + '～' + e;
+    }
+
+    function renderSummaryTable(students, yearlyStatsMap, semesterStatsMap, semesters) {
+      const wrapper = document.getElementById('hr-summary-table-wrapper');
+      if (!wrapper) return;
+      if (!students || !students.length) { wrapper.innerHTML = '<p style="padding:8px; color:#666;">生徒がいません。</p>'; return; }
+      var yearStart = (semesters && semesters.length) ? semesters[0].start : null;
+      var yearEnd = (semesters && semesters.length) ? semesters[semesters.length - 1].end : null;
+      var statLabels = ['欠', '遅', '早', '忌', '感', '公', '停'];
+      var h = '<table class="summary-table"><thead><tr>';
+      h += '<th rowspan="2" class="summary-name">氏名</th>';
+      h += '<th colspan="7" class="summary-period-head">年度通算<br><span class="summary-daterange">' + formatDateRange(yearStart, yearEnd) + '</span></th>';
+      (semesters || []).forEach(function(sem) {
+        h += '<th colspan="7" class="summary-period-head">' + (sem.name || '') + '<br><span class="summary-daterange">' + formatDateRange(sem.start, sem.end) + '</span></th>';
+      });
+      h += '</tr><tr class="summary-subhead">';
+      h += '<th class="summary-th-stat">欠</th><th class="summary-th-stat">遅</th><th class="summary-th-stat">早</th><th class="summary-th-stat">忌</th><th class="summary-th-stat">感</th><th class="summary-th-stat">公</th><th class="summary-th-stat">停</th>';
+      (semesters || []).forEach(function() {
+        statLabels.forEach(function(lbl) { h += '<th class="summary-th-stat">' + lbl + '</th>'; });
+      });
+      h += '</tr></thead><tbody>';
+      function cellHtml(val) {
+        var n = val || 0;
+        var cls = 'summary-cell' + (n !== 0 ? ' summary-cell-emphasis' : '');
+        return '<td class="' + cls + '">' + n + '</td>';
+      }
+      students.forEach(function(st) {
+        var num = st.number;
+        var y = yearlyStatsMap[num] || {};
+        h += '<tr><td class="summary-name">' + st.number + '.' + (st.name || '') + '</td>';
+        h += cellHtml(y.absent) + cellHtml(y.late) + cellHtml(y.early) + cellHtml(y.mourn) + cellHtml(y.infection) + cellHtml(y.inf) + cellHtml(y.stop);
+        (semesterStatsMap || []).forEach(function(semMap) {
+          var s = (semMap && semMap[num]) || {};
+          h += cellHtml(s.absent) + cellHtml(s.late) + cellHtml(s.early) + cellHtml(s.mourn) + cellHtml(s.infection) + cellHtml(s.inf) + cellHtml(s.stop);
+        });
+        h += '</tr>';
+      });
+      h += '</tbody></table>';
+      wrapper.innerHTML = h;
     }
 
     function calcSubjCounts(num, attMap, daysForYear) {
@@ -1187,8 +1289,9 @@
        btn.disabled=true; btn.textContent='保存中...';
        const hr = initData.config.HR;
        google.script.run
-         .withSuccessHandler(()=>{
+         .withSuccessHandler((res)=>{
            showToast('保存完了');
+           if (res && res.lastUpdated) setLastUpdatedDisplay(res.lastUpdated);
            hrEdits = {};
            restoreSaveButton(btn, origText);
            var cacheKey = 'app_hr_' + hr.grade + '_' + hr.class + '_' + hrState.year + '_' + hrState.month;
@@ -1551,24 +1654,24 @@
 
        const days = subjData.days;
        const students = subjData.students;
-       let h = `<table><thead><tr><th rowspan="2" class="col-fixed-name">氏名</th><th rowspan="2" class="col-fixed-stat">年度累積<br>欠課数<br><span style="font-size:9px; font-weight:normal;">限界○回で不認定</span></th>`;
+       let h = `<table class="attendance-table"><thead><tr><th rowspan="2" class="col-fixed-name">氏名</th><th rowspan="2" class="col-fixed-stat">年度累積<br>欠課数<br><span style="font-size:9px; font-weight:normal;">限界○回で不認定</span></th>`;
        days.forEach(d => {
-          let thClass = '';
-          if(d.date === TODAY_STR) thClass = 'today-col';
-          else if(d.dow === 0) thClass = 'th-sun';
-          else if(d.dow === 6) thClass = 'th-sat';
-          else if(!d.isSchoolday) thClass = 'th-holiday';
+          let thClass = 'col-day';
+          if(d.date === TODAY_STR) thClass += ' today-col';
+          else if(d.dow === 0) thClass += ' th-sun';
+          else if(d.dow === 6) thClass += ' th-sat';
+          else if(!d.isSchoolday) thClass += ' th-holiday';
           h += `<th class="${thClass} th-clickable" data-date="${d.date}" style="cursor:pointer;" title="設定">${parseInt(d.date.slice(-2))}<br>${['日','月','火','水','木','金','土'][d.dow]}</th>`;
        });
        h += '</tr><tr>';
        days.forEach(d => {
           const status = getDayStatusLabel(d);
-          let thClass = '';
-          if(d.date === TODAY_STR) thClass = 'today-col';
-          else if(d.dow === 0) thClass = 'th-sun';
-          else if(d.dow === 6) thClass = 'th-sat';
-          else if(!d.isSchoolday) thClass = 'th-holiday';
-          h += `<th class="${thClass}" style="font-weight:normal; font-size:10px;">${status}</th>`;
+          let thClass = 'col-day';
+          if(d.date === TODAY_STR) thClass += ' today-col';
+          else if(d.dow === 0) thClass += ' th-sun';
+          else if(d.dow === 6) thClass += ' th-sat';
+          else if(!d.isSchoolday) thClass += ' th-holiday';
+          h += `<th class="${thClass}" style="font-weight:normal;">${status}</th>`;
        });
        h += '</tr></thead><tbody>';
        
@@ -1590,7 +1693,7 @@
               else remainStr = `<br><span style="font-size:10px; color:${untilOut<=5?'red':'#666'}; font-weight:${untilOut<=5?'bold':'normal'};">限界${lim.display}／あと${untilOut}回で不認定</span>`;
             }
           }
-          h += `<td class="col-fixed-stat ${warnClass}" style="text-align:center; font-size:14px;">${count}${remainStr}</td>`;
+          h += `<td class="col-fixed-stat ${warnClass}" style="text-align:center;">${count}${remainStr}</td>`;
           days.forEach(d => {
              const key = `${d.date}__${d.period}__${st.number}`;
              const val = subjEdits[key] || (subjData.attendance[key]?subjData.attendance[key].status:'');
@@ -1610,7 +1713,7 @@
                  <div class="cell-menu menu-action" data-date="${d.date}" data-period="${d.period}" data-number="${st.number}">▼</div>
                </div>`;
              }
-             h += `<td class="${tdClass}">${inner}</td>`;
+             h += `<td class="col-day ${tdClass}">${inner}</td>`;
           });
           h += '</tr>';
        });

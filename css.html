@@ -21,14 +21,25 @@
       background: var(--bg-main);
       color: var(--text-main);
       font-size: 13px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
 
     .app-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       background: #0f172a;
       color: #fff;
       padding: 10px 16px;
       font-weight: 600;
       font-size: 16px;
+    }
+    .app-header-updated {
+      font-size: 11px;
+      font-weight: normal;
+      opacity: 0.9;
     }
 
     .tab-row {
@@ -52,9 +63,87 @@
       background: #eff6ff;
     }
 
+    .hr-sub-tab-row {
+      display: flex;
+      background: #e2e8f0;
+      border-radius: 8px;
+      padding: 4px;
+      margin-bottom: 8px;
+    }
+    .hr-sub-tab-btn {
+      flex: 1;
+      padding: 8px 12px;
+      text-align: center;
+      cursor: pointer;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .hr-sub-tab-btn.active {
+      background: #fff;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    }
+    .hr-sub-pane {
+      margin-top: 4px;
+    }
+
+    .settings-tab-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 8px;
+      background: #e2e8f0;
+      border-radius: 8px;
+      padding: 4px;
+    }
+    .settings-tab-btn {
+      padding: 8px 12px;
+      text-align: center;
+      cursor: pointer;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .settings-tab-btn.active {
+      background: #fff;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    }
+
     .container {
       padding: 8px;
       max-width: 100%;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+    }
+    #tab-homeroom,
+    #tab-subject,
+    #tab-settings {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .hr-sub-pane-fill {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .hr-sub-pane-fill .card-fill {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .table-summary-fill {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
     }
 
     .card {
@@ -103,15 +192,93 @@
       overflow-x: auto;
       border: 1px solid var(--border);
       border-radius: 6px;
-      max-height: 70vh;
-      background: #fff;
-      position: relative;
+    }
+    .table-summary {
+      overflow-y: auto;
+    }
+    .summary-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .summary-table th,
+    .summary-table td {
+      border: 1px solid var(--border);
+      padding: 4px 6px;
+    }
+    .summary-table .summary-name {
+      position: sticky;
+      left: 0;
+      background: var(--bg-card);
+      font-weight: 500;
+      min-width: 80px;
+    }
+    .summary-table .summary-block {
+      text-align: center;
+      white-space: nowrap;
+      min-width: 100px;
+    }
+    .summary-table thead th {
+      background: #f1f5f9;
+      font-weight: 600;
+    }
+    .summary-table .summary-period-head {
+      text-align: center;
+      font-size: 12px;
+      min-width: 120px;
+      padding: 6px 4px;
+    }
+    .summary-table .summary-daterange {
+      display: block;
+      font-size: 10px;
+      font-weight: normal;
+      color: var(--text-sub);
+      margin-top: 2px;
+    }
+    .summary-table .summary-subhead th {
+      font-weight: normal;
+      font-size: 11px;
+      color: var(--text-sub);
+      min-width: 32px;
+    }
+    .summary-table .summary-th-stat {
+      min-width: 32px;
+    }
+    .summary-table .summary-cell {
+      text-align: center;
+      min-width: 32px;
+    }
+    .summary-table .summary-cell-emphasis {
+      font-weight: bold;
+      font-size: 14px;
     }
 
     table {
       border-collapse: separate;
       border-spacing: 0;
       min-width: max-content;
+    }
+    .attendance-table {
+      table-layout: fixed;
+    }
+    .attendance-table .col-day {
+      width: 44px;
+      min-width: 44px;
+      max-width: 44px;
+      font-size: 10px;
+      line-height: 1.15;
+      white-space: normal;
+      word-break: break-all;
+      overflow: hidden;
+      padding: 2px 1px;
+    }
+    .attendance-table thead tr:nth-child(2) .col-day {
+      font-size: 9px;
+      line-height: 1.2;
+    }
+    .attendance-table .col-day .cell-status,
+    .attendance-table .col-day .cell-menu {
+      font-size: 11px;
     }
 
     th,
@@ -204,6 +371,28 @@
     th.col-fixed-stat {
       z-index: 30;
       background: #f9fafb;
+    }
+
+    /* 教科担任の年度累積欠課数列は幅を半分に */
+    #subj-table-wrapper .col-fixed-stat {
+      width: 80px;
+      min-width: 80px;
+      max-width: 80px;
+      font-size: 9px;
+      line-height: 1.2;
+      white-space: normal;
+      word-break: break-all;
+      padding: 2px 4px;
+      text-align: center;
+    }
+    #subj-table-wrapper th.col-fixed-stat {
+      font-size: 8px;
+    }
+    #subj-table-wrapper td.col-fixed-stat {
+      font-size: 11px !important;
+    }
+    #subj-table-wrapper td.col-fixed-stat span {
+      font-size: 9px !important;
     }
 
     th.th-sun {

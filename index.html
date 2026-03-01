@@ -9,7 +9,10 @@
 </head>
 
 <body>
-  <header class="app-header">出席管理 Ver<?= APP_VERSION ?></header>
+  <header class="app-header">
+    <span class="app-header-title">出席管理 Ver<?= APP_VERSION ?></span>
+    <span id="app-last-updated" class="app-header-updated" title="出席データの最終更新日時">—</span>
+  </header>
 
   <div class="tab-row">
     <div class="tab-btn active" data-tab="homeroom">クラス担任</div>
@@ -19,18 +22,29 @@
 
   <div class="container">
     <div id="tab-homeroom">
-      <div class="card">
-        <div class="row">
-          <label style="font-size:12px; font-weight:bold;">学期:</label>
-          <div id="hr-semester-btns" class="semester-btns"></div>
+      <div class="hr-sub-tab-row">
+        <div class="hr-sub-tab-btn active" data-hr-sub="input">入力</div>
+        <div class="hr-sub-tab-btn" data-hr-sub="summary">欠席・遅刻・早退等の集約</div>
+      </div>
+      <div id="hr-sub-input" class="hr-sub-pane">
+        <div class="card">
+          <div class="row">
+            <label style="font-size:12px; font-weight:bold;">学期:</label>
+            <div id="hr-semester-btns" class="semester-btns"></div>
+          </div>
+          <div class="row" style="justify-content:space-between; margin-top:8px;">
+            <div class="month-tabs" id="hr-month-tabs"></div>
+            <button class="btn" id="hr-save-btn" disabled>保存</button>
+          </div>
         </div>
-        <div class="row" style="justify-content:space-between; margin-top:8px;">
-          <div class="month-tabs" id="hr-month-tabs"></div>
-          <button class="btn" id="hr-save-btn" disabled>保存</button>
+        <div id="hr-table-wrapper" class="table-container">
+          <div style="padding:20px; text-align:center;">読み込み中...</div>
         </div>
       </div>
-      <div id="hr-table-wrapper" class="table-container">
-        <div style="padding:20px; text-align:center;">読み込み中...</div>
+      <div id="hr-sub-summary" class="hr-sub-pane hr-sub-pane-fill" style="display:none;">
+        <div class="card card-fill">
+          <div id="hr-summary-table-wrapper" class="table-container table-summary table-summary-fill"></div>
+        </div>
       </div>
     </div>
 
@@ -56,25 +70,21 @@
     </div>
 
     <div id="tab-settings" style="display:none;">
-      <div class="card">
-        <div class="master-toolbar">
-          <label style="font-weight:bold; font-size:12px;">設定項目:</label>
-          <select id="settings-mode-select" onchange="onSettingsModeChange()">
-            <option value="calendar">カレンダー設定</option>
-            <option value="students">生徒名簿</option>
-            <option value="timetable">時間割(クラス別)</option>
-            <option value="teacher_config">担当設定</option>
-            <option value="subjects">科目マスタ</option>
-            <option value="semesters">学期設定</option>
-          </select>
-        </div>
+      <div class="settings-tab-row">
+        <div class="settings-tab-btn active" data-settings="calendar">カレンダー設定</div>
+        <div class="settings-tab-btn" data-settings="students">生徒名簿</div>
+        <div class="settings-tab-btn" data-settings="timetable">時間割</div>
+        <div class="settings-tab-btn" data-settings="teacher_config">担当設定</div>
+        <div class="settings-tab-btn" data-settings="subjects">科目マスタ</div>
+        <div class="settings-tab-btn" data-settings="semesters">学期設定</div>
+      </div>
 
+      <div class="card">
         <div id="settings-ui-calendar">
           <div class="row" style="justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
             <div class="row" style="align-items:center; margin:0;">
-              <label style="font-size:12px; font-weight:bold; margin-right:6px;">年</label>
-              <select id="cal-setting-year" style="font-size:14px; min-width:72px;"></select>
-              <span style="font-size:12px; font-weight:bold; margin-left:12px; margin-right:4px;">月</span>
+              <span id="cal-current-year-label" style="font-size:12px; font-weight:bold; margin-right:8px;"></span>
+              <span style="font-size:12px; font-weight:bold; margin-right:4px;">月</span>
               <div id="cal-month-btns" class="cal-month-btns"></div>
             </div>
             <button class="btn" id="cal-bulk-save-btn" disabled>一括保存</button>
