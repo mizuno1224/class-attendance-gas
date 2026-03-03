@@ -57,16 +57,39 @@
         </div>
         <div id="subj-remaining-info" style="font-size:12px; font-weight:bold; color:#059669; margin:4px 0;"></div>
         
-        <div class="row" style="margin-top:8px;">
-          <label style="font-size:12px; font-weight:bold;">学期:</label>
-          <div id="subj-semester-btns" class="semester-btns"></div>
+        <div class="subj-sub-tab-row" style="margin-top:8px;">
+          <div class="subj-sub-tab-btn active" data-subj-sub="attendance">出欠入力</div>
+          <div class="subj-sub-tab-btn" data-subj-sub="test">テスト入力</div>
+          <div class="subj-sub-tab-btn" data-subj-sub="submission">提出物入力</div>
+          <div class="subj-sub-tab-btn" data-subj-sub="summary">成績照会</div>
         </div>
-        <div class="row" style="justify-content:space-between; margin-top:8px;">
-          <div class="month-tabs" id="subj-month-tabs"></div>
-          <button class="btn" id="subj-save-btn" disabled>保存</button>
+
+        <div id="subj-attendance-controls">
+          <div class="row" style="margin-top:8px; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <div class="row" style="margin:0;">
+              <label style="font-size:12px; font-weight:bold;">学期:</label>
+              <div id="subj-semester-btns" class="semester-btns"></div>
+            </div>
+            <button class="btn" id="subj-save-btn" disabled>保存</button>
+          </div>
+        </div>
+
+        <div id="subj-test-controls" style="display:none; margin-top:8px;">
+          <div class="row" style="justify-content:flex-end;">
+            <button class="btn" id="subj-test-save-btn" disabled>テスト保存</button>
+          </div>
+        </div>
+
+        <div id="subj-submission-controls" style="display:none; margin-top:8px;">
+          <div class="row" style="justify-content:flex-end;">
+            <button class="btn" id="subj-submission-save-btn" disabled>提出物保存</button>
+          </div>
         </div>
       </div>
       <div id="subj-table-wrapper" class="table-container"></div>
+      <div id="subj-test-table-wrapper" class="table-container" style="display:none;"></div>
+      <div id="subj-submission-table-wrapper" class="table-container" style="display:none;"></div>
+      <div id="subj-summary-table-wrapper" class="table-container" style="display:none;"></div>
     </div>
 
     <div id="tab-settings" style="display:none;">
@@ -77,6 +100,8 @@
         <div class="settings-tab-btn" data-settings="teacher_config">担当設定</div>
         <div class="settings-tab-btn" data-settings="subjects">科目マスタ</div>
         <div class="settings-tab-btn" data-settings="semesters">学期設定</div>
+        <div class="settings-tab-btn" data-settings="test_master">テストマスタ</div>
+        <div class="settings-tab-btn" data-settings="submission_master">提出物マスタ</div>
       </div>
 
       <div class="card">

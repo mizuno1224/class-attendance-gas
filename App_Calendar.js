@@ -86,6 +86,68 @@ function generateCalendarData_(year, month, calendarRows) {
   return days;
 }
 
+/**
+ * 指定した日付範囲のカレンダーデータを生成（学期単位など）
+ * @param {string} startDateStr - "YYYY-MM-DD"
+ * @param {string} endDateStr - "YYYY-MM-DD"
+ * @param {Array} calendarRows - calendar シートの行データ
+ */
+function generateCalendarDataForRange_(startDateStr, endDateStr, calendarRows) {
+  const calMap = {};
+  function parseBool(v) {
+    if (v === true || v === false) return v;
+    const s = String(v).toLowerCase();
+    return s === 'true' || s === '1' || s === 'yes';
+  }
+  (calendarRows || []).forEach(r => {
+    const k = dateToKey_(r.date);
+    let vp = null;
+    if (r.validPeriods) {
+      const s = String(r.validPeriods).replace(/[０-９]/g, function(ch) { return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); });
+      vp = s.split(',').map(n => Number(n.trim())).filter(n => !isNaN(n));
+    }
+    calMap[k] = {
+      isSchoolday: parseBool(r.isSchoolday),
+      isNoClassDay: parseBool(r.isNoClassDay),
+      remark: r.remark || '',
+      validPeriods: vp
+    };
+  });
+
+  const start = new Date(startDateStr);
+  const end = new Date(endDateStr);
+  const holidayMap = getHolidaysMap_(start, end);
+  const days = [];
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const k = dateToKey_(d);
+    const dow = d.getDay();
+    const isHoliday = !!holidayMap[k];
+    if (calMap[k]) {
+      days.push({
+        date: k,
+        dow: dow,
+        isSchoolday: calMap[k].isSchoolday,
+        isNoClassDay: calMap[k].isNoClassDay,
+        remark: calMap[k].remark,
+        validPeriods: calMap[k].validPeriods,
+        isHoliday: isHoliday
+      });
+    } else {
+      const isOff = (dow === 0 || dow === 6 || isHoliday);
+      days.push({
+        date: k,
+        dow: dow,
+        isSchoolday: !isOff,
+        isNoClassDay: isOff,
+        remark: '',
+        validPeriods: null,
+        isHoliday: isHoliday
+      });
+    }
+  }
+  return days;
+}
+
 function saveCalendarBulk(records) {
   const ss = SpreadsheetApp.openById(SS_ID);
   let sh = ss.getSheetByName('calendar');

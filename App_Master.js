@@ -28,8 +28,11 @@ function getMasterData(sheetName) {
 
 function saveMasterData(sheetName, headers, records) {
   const ss = SpreadsheetApp.openById(SS_ID);
-  const sh = ss.getSheetByName(sheetName);
-  if (!sh) throw new Error('Sheet not found');
+  let sh = ss.getSheetByName(sheetName);
+  if (!sh) {
+    sh = ss.insertSheet(sheetName);
+    sh.appendRow(headers);
+  }
 
   // ★追加: 科目IDと科目名の統一処理
   // records内の subjectName を subjectId で上書きする

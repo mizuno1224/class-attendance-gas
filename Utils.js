@@ -55,8 +55,11 @@ function saveAttendanceCommon_(sheetName, payload, headerList) {
 
   try {
     const ss = SpreadsheetApp.openById(SS_ID);
-    const sh = ss.getSheetByName(sheetName);
-    if (!sh) throw new Error('Sheet not found: ' + sheetName);
+    let sh = ss.getSheetByName(sheetName);
+    if (!sh) {
+      sh = ss.insertSheet(sheetName);
+      sh.appendRow(headerList);
+    }
 
     const lastRow = sh.getLastRow();
     const range = sh.getDataRange();
@@ -87,6 +90,10 @@ function saveAttendanceCommon_(sheetName, payload, headerList) {
         payloadKeys.add(d + '__' + String(rec.grade) + '__' + String(rec.class) + '__' + String(rec.number));
       } else if (sheetName === 'attendance_subject') {
         payloadKeys.add(d + '__' + String(rec.subjectId) + '__' + String(rec.grade) + '__' + String(rec.class) + '__' + String(rec.period) + '__' + String(rec.number));
+      } else if (sheetName === 'test_scores') {
+        payloadKeys.add(String(rec.year) + '__' + String(rec.subjectId) + '__' + String(rec.grade) + '__' + String(rec.class) + '__' + String(rec.testId) + '__' + String(rec.studentNumber));
+      } else if (sheetName === 'submissions') {
+        payloadKeys.add(String(rec.year) + '__' + String(rec.subjectId) + '__' + String(rec.grade) + '__' + String(rec.class) + '__' + String(rec.submissionId) + '__' + String(rec.studentNumber));
       }
     });
 
@@ -100,6 +107,12 @@ function saveAttendanceCommon_(sheetName, payload, headerList) {
       }
       if (sheetName === 'attendance_subject') {
         return d + '__' + String(row[idx.subjectId] || '') + '__' + String(row[idx.grade] || '') + '__' + String(row[idx.class] || '') + '__' + String(row[idx.period] || '') + '__' + String(row[idx.number] || '');
+      }
+      if (sheetName === 'test_scores') {
+        return String(row[idx.year] || '') + '__' + String(row[idx.subjectId] || '') + '__' + String(row[idx.grade] || '') + '__' + String(row[idx.class] || '') + '__' + String(row[idx.testId] || '') + '__' + String(row[idx.studentNumber] || '');
+      }
+      if (sheetName === 'submissions') {
+        return String(row[idx.year] || '') + '__' + String(row[idx.subjectId] || '') + '__' + String(row[idx.grade] || '') + '__' + String(row[idx.class] || '') + '__' + String(row[idx.submissionId] || '') + '__' + String(row[idx.studentNumber] || '');
       }
       return '';
     }

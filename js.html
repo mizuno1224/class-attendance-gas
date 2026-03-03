@@ -4,7 +4,7 @@
     const mm = ('0' + (TODAY.getMonth()+1)).slice(-2);
     const dd = ('0' + TODAY.getDate()).slice(-2);
     const TODAY_STR = `${yyyy}-${mm}-${dd}`;
-    const CACHE_TTL_MS = 5 * 60 * 1000;
+    const CACHE_TTL_MS = 15 * 60 * 1000; /* 15分キャッシュで読込回数削減 */
 
     let currentTab = 'homeroom';
     let initData = null; 
@@ -12,6 +12,11 @@
     let hrEdits = {}; 
     let subjData = null;
     let subjEdits = {};
+    let testData = null;
+    let testEdits = {};
+    let submissionData = null;
+    let submissionEdits = {};
+    let currentSubjTab = 'attendance';
     let currentSubjId = null;
     let calSettingsData = []; 
     let calEdits = false;
@@ -54,6 +59,39 @@
       
       document.getElementById('subj-grade').addEventListener('change', onSubjGradeChange);
       document.getElementById('subj-class').addEventListener('change', onSubjClassChange);
+
+      document.querySelectorAll('.subj-sub-tab-btn').forEach(btn => {
+        btn.addEventListener('click', e => {
+          const target = e.target.dataset.subjSub;
+          const hasUnsaved = Object.keys(subjEdits).length > 0 || Object.keys(testEdits).length > 0 || Object.keys(submissionEdits).length > 0;
+          if (hasUnsaved) {
+            // Unsaved changes warning could go here, but for simplicity we'll just switch
+          }
+          doSubjSubTabSwitch(target);
+        });
+      });
+      document.getElementById('subj-test-save-btn').addEventListener('click', saveTestScores);
+      document.getElementById('subj-submission-save-btn').addEventListener('click', saveSubmissions);
+    }
+
+    function doSubjSubTabSwitch(tabName) {
+      currentSubjTab = tabName;
+      document.querySelectorAll('.subj-sub-tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.subjSub === tabName);
+      });
+      document.getElementById('subj-attendance-controls').style.display = tabName === 'attendance' ? 'block' : 'none';
+      document.getElementById('subj-test-controls').style.display = tabName === 'test' ? 'block' : 'none';
+      document.getElementById('subj-submission-controls').style.display = tabName === 'submission' ? 'block' : 'none';
+
+      document.getElementById('subj-table-wrapper').style.display = tabName === 'attendance' ? 'block' : 'none';
+      document.getElementById('subj-test-table-wrapper').style.display = tabName === 'test' ? 'block' : 'none';
+      document.getElementById('subj-submission-table-wrapper').style.display = tabName === 'submission' ? 'block' : 'none';
+      document.getElementById('subj-summary-table-wrapper').style.display = tabName === 'summary' ? 'block' : 'none';
+
+      if (tabName === 'attendance') loadSubject();
+      else if (tabName === 'test') loadSubjTests();
+      else if (tabName === 'submission') loadSubjSubmissions();
+      else if (tabName === 'summary') loadSubjSummary();
     }
 
     function formatLastUpdated(isoStr) {
@@ -87,7 +125,7 @@
         }
 
         renderSemesterButtons('hr-semester-btns', hrState, 'hr-month-tabs', loadHomeroom);
-        renderSemesterButtons('subj-semester-btns', subjState, 'subj-month-tabs', loadSubject);
+        renderSemesterButtons('subj-semester-btns', subjState, null, loadSubject);
         
         const tabs = document.querySelectorAll('.tab-btn');
         tabs.forEach(b => b.replaceWith(b.cloneNode(true))); 
@@ -172,6 +210,7 @@
       document.getElementById('tab-subject').style.display = currentTab==='subject'?'block':'none';
       document.getElementById('tab-settings').style.display = currentTab==='settings'?'block':'none';
       if (currentTab === 'subject' && !subjData) triggerDefaultSubjLoad();
+      if (currentTab === 'subject' && subjData) doSubjSubTabSwitch(currentSubjTab);
       if (currentTab === 'settings') {
         var activeSettingsBtn = document.querySelector('.settings-tab-btn.active');
         var settingsMode = activeSettingsBtn ? activeSettingsBtn.getAttribute('data-settings') : 'calendar';
@@ -204,6 +243,20 @@
        document.getElementById(containerId).innerHTML = `<div style="padding:20px; text-align:center;">読み込み中...</div>`;
     }
 
+    function addLoadingOverlay(containerId) {
+       const con = document.getElementById(containerId);
+       if (!con || con.querySelector('.loading-overlay')) return;
+       const overlay = document.createElement('div');
+       overlay.className = 'loading-overlay';
+       overlay.textContent = '読込中...';
+       con.appendChild(overlay);
+    }
+    function removeLoadingOverlay(containerId) {
+       const con = document.getElementById(containerId);
+       const el = con && con.querySelector('.loading-overlay');
+       if (el) el.remove();
+    }
+
     function restoreSaveButton(btn, origText) {
       if (btn) { btn.disabled = false; if (origText != null) btn.textContent = origText; }
       updateSaveBtnState();
@@ -212,17 +265,38 @@
     function updateSaveBtnState() {
       const hasHrDiff = Object.keys(hrEdits).length > 0;
       const btnHr = document.getElementById('hr-save-btn');
-      btnHr.disabled = !hasHrDiff;
-      btnHr.textContent = '保存';
+      if (btnHr) {
+        btnHr.disabled = !hasHrDiff;
+        btnHr.textContent = '保存';
+      }
 
       const hasSubjDiff = Object.keys(subjEdits).length > 0;
       const btnSubj = document.getElementById('subj-save-btn');
-      btnSubj.disabled = !hasSubjDiff;
-      btnSubj.textContent = '保存';
+      if (btnSubj) {
+        const canSaveSubj = isSubjGradeClassSelected() && currentSubjId;
+        btnSubj.disabled = !hasSubjDiff || !canSaveSubj;
+        btnSubj.textContent = '保存';
+      }
+
+      const hasTestDiff = Object.keys(testEdits).length > 0;
+      const btnTest = document.getElementById('subj-test-save-btn');
+      if (btnTest) {
+        btnTest.disabled = !hasTestDiff;
+        btnTest.textContent = 'テスト保存';
+      }
+
+      const hasSubmDiff = Object.keys(submissionEdits).length > 0;
+      const btnSubm = document.getElementById('subj-submission-save-btn');
+      if (btnSubm) {
+        btnSubm.disabled = !hasSubmDiff;
+        btnSubm.textContent = '提出物保存';
+      }
 
       const btnCal = document.getElementById('cal-bulk-save-btn');
-      btnCal.disabled = !calEdits;
-      btnCal.textContent = '一括保存';
+      if (btnCal) {
+        btnCal.disabled = !calEdits;
+        btnCal.textContent = '一括保存';
+      }
     }
 
     // 単位数×35÷3（小数含む）。11までセーフ・12でアウトの例に合わせる
@@ -247,7 +321,9 @@
       'timetable': ['grade', 'class', 'weekday', 'period', 'subjectId'],
       'subjects': ['subjectId'], 
       'semesters': ['semesterName', 'startDate', 'endDate'],
-      'teacher_config': ['type', 'grade', 'class', 'subjectId']
+      'teacher_config': ['type', 'grade', 'class', 'subjectId'],
+      'test_master': ['testId', 'testName', 'weightKnowledge', 'weightThinking'],
+      'submission_master': ['submissionId', 'submissionName']
     };
     let currentMasterSheet = '';
     let currentMasterHeaders = [];
@@ -311,6 +387,7 @@
             let val = row[hd] !== undefined ? row[hd] : '';
             let inputHtml = '';
             const isDate = /date/i.test(hd);
+            const isNumber = /weight|score|units|grade|number|period|weekday/i.test(hd);
             if (isDate && val) {
                const d = new Date(val);
                if (!isNaN(d.getTime())) {
@@ -327,7 +404,7 @@
                  <option value="SUBJECT" ${val==='SUBJECT'?'selected':''}>SUBJECT</option>
                </select>`;
             } else {
-               const type = isDate ? 'date' : 'text';
+               const type = isDate ? 'date' : (isNumber ? 'number' : 'text');
                inputHtml = `<input type="${type}" class="master-input" value="${safeVal}" onchange="updateMasterData(${i}, '${hd}', this.value)">`;
             }
             h += `<td>${inputHtml}</td>`;
@@ -489,17 +566,10 @@
       var m = calSettingsState.month;
       var acYearStart = getCurrentAcademicYearStart();
       var fetchYear = m >= 4 ? acYearStart : acYearStart + 1;
-      var cacheKey = fetchYear + '-' + m;
-      if (calSettingsCache[cacheKey]) {
-        calSettingsData = calSettingsCache[cacheKey];
-        renderCalendarSettingsTable(calSettingsData, fetchYear, m);
-        return;
-      }
       renderSkeleton('cal-settings-table-wrapper');
       calEdits = false;
       updateSaveBtnState();
       google.script.run.withSuccessHandler(function(days) {
-        calSettingsCache[cacheKey] = days;
         calSettingsData = days;
         renderCalendarSettingsTable(days, fetchYear, m);
       }).withFailureHandler(onFailure).getCalendarSettingsViewData(fetchYear, m);
@@ -679,7 +749,7 @@
            const d = new Date(s.start);
            stateObj.year = d.getFullYear();
            stateObj.month = d.getMonth() + 1;
-           updateMonthTabs(monthContainerId, stateObj, loadCb);
+           if (monthContainerId) updateMonthTabs(monthContainerId, stateObj, loadCb);
            loadCb();
         };
         c.appendChild(btn);
@@ -1505,7 +1575,12 @@
             loadHomeroom();
           } else {
             var g = document.getElementById('subj-grade').value, c = document.getElementById('subj-class').value;
-            localStorage.removeItem('app_subj_' + g + '_' + c + '_' + currentSubjId + '_' + subjState.year + '_' + subjState.month);
+            var sem = initData.semesters && initData.semesters[subjState.semesterIdx];
+            if (sem) {
+              var start = (sem.start && sem.start.slice) ? sem.start.slice(0,10) : sem.start;
+              var end = (sem.end && sem.end.slice) ? sem.end.slice(0,10) : sem.end;
+              localStorage.removeItem('app_subj_sem_' + g + '_' + c + '_' + currentSubjId + '_' + start + '_' + end);
+            }
             loadSubject();
           }
         })
@@ -1565,11 +1640,13 @@
       const cs = document.getElementById('subj-class');
       cs.innerHTML = '<option value="" disabled selected>組</option>';
       document.getElementById('subj-subjects-container').innerHTML = '';
+      currentSubjId = null;
       const subList = initData.config.ASSIGNED_SUBJECTS || [];
       const classes = [...new Set(subList.filter(a=>a.grade==g).map(a=>a.class))];
       classes.forEach(c=>{
          cs.innerHTML += `<option value="${c}">${c}組</option>`;
       });
+      showSubjSelectRequiredMessage();
     }
 
     function onSubjClassChange() {
@@ -1578,24 +1655,28 @@
       const container = document.getElementById('subj-subjects-container');
       container.innerHTML = '';
       container.style.display = 'flex';
+      currentSubjId = null;
       const subList = initData.config.ASSIGNED_SUBJECTS || [];
       const subjects = subList.filter(a=>a.grade==g && a.class==c);
       subjects.forEach((item, index) => {
          const btn = document.createElement('div');
          btn.className = 'subject-tab';
-         // ★統一対応: IDのみ表示
          btn.textContent = item.subjectId;
          btn.dataset.id = item.subjectId;
          btn.onclick = () => {
            Array.from(container.children).forEach(b => b.classList.remove('active'));
            btn.classList.add('active');
            currentSubjId = item.subjectId;
-           updateMonthTabs('subj-month-tabs', subjState, loadSubject);
-           loadSubject();
+           if (currentSubjTab === 'attendance') {
+             loadSubject();
+           } else {
+             doSubjSubTabSwitch(currentSubjTab);
+           }
          };
          container.appendChild(btn);
          if (index === 0) btn.click();
       });
+      if (!g || !c || subjects.length === 0) showSubjSelectRequiredMessage();
     }
 
     function triggerDefaultSubjLoad() {
@@ -1607,14 +1688,51 @@
        onSubjClassChange();
     }
 
+    function isSubjGradeClassSelected() {
+       const g = document.getElementById('subj-grade') && document.getElementById('subj-grade').value;
+       const c = document.getElementById('subj-class') && document.getElementById('subj-class').value;
+       return !!(g && c);
+    }
+    function showSubjSelectRequiredMessage() {
+       const g = document.getElementById('subj-grade') && document.getElementById('subj-grade').value;
+       const c = document.getElementById('subj-class') && document.getElementById('subj-class').value;
+       const s = currentSubjId;
+       subjData = null;
+       let msg = '';
+       if (!g || !c) msg = '学年・組を選択してください';
+       else if (!s) msg = '科目を選択してください';
+       else return;
+       document.getElementById('subj-remaining-info').textContent = '';
+       document.getElementById('subj-table-wrapper').innerHTML = '<div class="subj-select-required-msg">' + msg + '</div>';
+       updateSaveBtnState();
+    }
+
     function loadSubject() {
        const g=document.getElementById('subj-grade').value;
        const c=document.getElementById('subj-class').value;
        const s=currentSubjId;
-       if(!g || !c || !s) return;
-       
+       if(!g || !c) {
+         showSubjSelectRequiredMessage();
+         return;
+       }
+       if(!s) {
+         showSubjSelectRequiredMessage();
+         return;
+       }
+       var sem = initData.semesters && initData.semesters[subjState.semesterIdx];
+       if (!sem) {
+         sem = initData.semesters && initData.semesters[0];
+         if (sem) subjState.semesterIdx = 0;
+       }
+       if (!sem) {
+         document.getElementById('subj-remaining-info').textContent = '学期が設定されていません';
+         document.getElementById('subj-table-wrapper').innerHTML = '<div class="subj-select-required-msg">学期設定を確認してください</div>';
+         return;
+       }
        document.getElementById('subj-remaining-info').textContent = '';
-       const cacheKey = `app_subj_${g}_${c}_${s}_${subjState.year}_${subjState.month}`;
+       var semesterStart = sem.start.slice ? sem.start.slice(0,10) : sem.start;
+       var semesterEnd = sem.end.slice ? sem.end.slice(0,10) : sem.end;
+       const cacheKey = `app_subj_sem_${g}_${c}_${s}_${semesterStart}_${semesterEnd}`;
        const cachedSubj = localStorage.getItem(cacheKey);
        if (cachedSubj) {
            try {
@@ -1637,7 +1755,7 @@
           localStorage.setItem(cacheKey, JSON.stringify({ data: data, fetchedAt: Date.now() }));
           subjData = data;
           renderSubjectTable();
-       }).withFailureHandler(onFailure).getSubjectMonthData({grade:g, className:c, subjectId:s, year:subjState.year, month:subjState.month});
+       }).withFailureHandler(onFailure).getSubjectSemesterData({grade:g, className:c, subjectId:s, semesterStart:semesterStart, semesterEnd:semesterEnd});
     }
 
     function renderSubjectTable() {
@@ -1648,12 +1766,22 @@
        });
        const con = delegation.el;
 
-       if (subjData.remainingClasses !== undefined) {
-           document.getElementById('subj-remaining-info').textContent = `今学期の残り授業数（今日以降）: ${subjData.remainingClasses} 回`;
+       var info = '';
+       if (subjData.semesterStart && subjData.semesterEnd) {
+         info = '学期内の授業日のみ表示（一括編集）';
+         if (subjData.remainingClasses !== undefined) info += ' ・ 今学期の残り授業数: ' + subjData.remainingClasses + ' 回';
+       } else if (subjData.remainingClasses !== undefined) {
+         info = '今学期の残り授業数（今日以降）: ' + subjData.remainingClasses + ' 回';
        }
+       document.getElementById('subj-remaining-info').textContent = info;
 
        const days = subjData.days;
        const students = subjData.students;
+       function subjDayLabel(d) {
+         var m = parseInt(d.date.slice(5,7), 10);
+         var day = parseInt(d.date.slice(8,10), 10);
+         return m + '/' + day + '(' + d.period + ')';
+       }
        let h = `<table class="attendance-table"><thead><tr><th rowspan="2" class="col-fixed-name">氏名</th><th rowspan="2" class="col-fixed-stat">年度累積<br>欠課数<br><span style="font-size:9px; font-weight:normal;">限界○回で不認定</span></th>`;
        days.forEach(d => {
           let thClass = 'col-day';
@@ -1661,7 +1789,7 @@
           else if(d.dow === 0) thClass += ' th-sun';
           else if(d.dow === 6) thClass += ' th-sat';
           else if(!d.isSchoolday) thClass += ' th-holiday';
-          h += `<th class="${thClass} th-clickable" data-date="${d.date}" style="cursor:pointer;" title="設定">${parseInt(d.date.slice(-2))}<br>${['日','月','火','水','木','金','土'][d.dow]}</th>`;
+          h += `<th class="${thClass} th-clickable" data-date="${d.date}" data-period="${d.period}" style="cursor:pointer;" title="設定">${subjDayLabel(d)}<br><span style="font-size:9px;">${['日','月','火','水','木','金','土'][d.dow]}</span></th>`;
        });
        h += '</tr><tr>';
        days.forEach(d => {
@@ -1671,7 +1799,7 @@
           else if(d.dow === 0) thClass += ' th-sun';
           else if(d.dow === 6) thClass += ' th-sat';
           else if(!d.isSchoolday) thClass += ' th-holiday';
-          h += `<th class="${thClass}" style="font-weight:normal;">${status}</th>`;
+          h += `<th class="${thClass}" style="font-weight:normal; font-size:10px;">${status || '—'}</th>`;
        });
        h += '</tr></thead><tbody>';
        
@@ -1736,9 +1864,21 @@
     }
     
     function saveSubject() {
+       const g = document.getElementById('subj-grade').value;
+       const c = document.getElementById('subj-class').value;
+       if (!g || !c) {
+         showToast('学年・組を選択してから保存してください', true);
+         return;
+       }
+       if (!currentSubjId) {
+         showToast('科目を選択してから保存してください', true);
+         return;
+       }
        const recs = [];
        Object.keys(subjEdits).forEach(k => {
-          const [d, p, n] = k.split('__');
+          const parts = k.split('__');
+          if (parts.length < 3) return;
+          const [d, p, n] = parts;
           recs.push({date:d, period:p, number:n, status:subjEdits[k]});
        });
        if (!recs.length) return showToast('変更なし');
@@ -1752,8 +1892,12 @@
             restoreSaveButton(btn, origSubjText);
             var g = document.getElementById('subj-grade').value;
             var c = document.getElementById('subj-class').value;
-            var cacheKey = 'app_subj_' + g + '_' + c + '_' + currentSubjId + '_' + subjState.year + '_' + subjState.month;
-            localStorage.removeItem(cacheKey);
+            var sem = initData.semesters && initData.semesters[subjState.semesterIdx];
+            if (sem) {
+              var start = (sem.start && sem.start.slice) ? sem.start.slice(0,10) : sem.start;
+              var end = (sem.end && sem.end.slice) ? sem.end.slice(0,10) : sem.end;
+              localStorage.removeItem('app_subj_sem_' + g + '_' + c + '_' + currentSubjId + '_' + start + '_' + end);
+            }
             loadSubject();
             if (window.pendingTabAfterSave) { doTabSwitch(window.pendingTabAfterSave); window.pendingTabAfterSave = null; }
          })
@@ -1764,6 +1908,257 @@
             subjectId:currentSubjId,
             records:recs
          });
+    }
+
+    function loadSubjTests() {
+      const g = document.getElementById('subj-grade').value;
+      const c = document.getElementById('subj-class').value;
+      const s = currentSubjId;
+      if(!g || !c || !s) return;
+      renderSkeleton('subj-test-table-wrapper');
+      testEdits = {};
+      updateSaveBtnState();
+      google.script.run.withSuccessHandler(data => {
+        testData = data;
+        renderSubjTestTable();
+      }).withFailureHandler(onFailure).getSubjectTestData({grade:g, className:c, subjectId:s});
+    }
+
+    function renderSubjTestTable() {
+      if (!testData) return;
+      const students = testData.students;
+      const tests = testData.testMaster;
+      let h = `<table class="attendance-table"><thead><tr><th rowspan="2" class="col-fixed-name">氏名</th>`;
+      tests.forEach(t => {
+        h += `<th colspan="2">${t.testName}</th>`;
+      });
+      h += '</tr><tr>';
+      tests.forEach(t => {
+        h += `<th style="font-size:10px;">知識技能<br>(${t.weightKnowledge})</th><th style="font-size:10px;">思考判断<br>(${t.weightThinking})</th>`;
+      });
+      h += '</tr></thead><tbody>';
+
+      students.forEach(st => {
+        h += `<tr><td class="col-fixed-name">${st.number}.${st.name}</td>`;
+        tests.forEach(t => {
+          const keyK = `${st.number}__${t.testId}__K`;
+          const keyT = `${st.number}__${t.testId}__T`;
+          const valK = testEdits[keyK] !== undefined ? testEdits[keyK] : (testData.scores[st.number] && testData.scores[st.number][t.testId] ? testData.scores[st.number][t.testId].scoreKnowledge : '');
+          const valT = testEdits[keyT] !== undefined ? testEdits[keyT] : (testData.scores[st.number] && testData.scores[st.number][t.testId] ? testData.scores[st.number][t.testId].scoreThinking : '');
+          
+          h += `<td><input type="number" class="master-input" style="width:50px;" value="${valK}" onchange="updateTestScore('${st.number}', '${t.testId}', 'K', this.value)"></td>`;
+          h += `<td><input type="number" class="master-input" style="width:50px;" value="${valT}" onchange="updateTestScore('${st.number}', '${t.testId}', 'T', this.value)"></td>`;
+        });
+        h += '</tr>';
+      });
+      h += '</tbody></table>';
+      document.getElementById('subj-test-table-wrapper').innerHTML = h;
+    }
+
+    window.updateTestScore = function(num, testId, type, val) {
+      testEdits[`${num}__${testId}__${type}`] = val;
+      updateSaveBtnState();
+    };
+
+    function saveTestScores() {
+      const g = document.getElementById('subj-grade').value;
+      const c = document.getElementById('subj-class').value;
+      const s = currentSubjId;
+      if (!g || !c) { showToast('学年・組を選択してから保存してください', true); return; }
+      if (!s) { showToast('科目を選択してから保存してください', true); return; }
+      const records = [];
+      const studentTests = {};
+      Object.keys(testEdits).forEach(k => {
+        const [num, testId, type] = k.split('__');
+        if (!studentTests[num]) studentTests[num] = {};
+        if (!studentTests[num][testId]) studentTests[num][testId] = {};
+        studentTests[num][testId][type] = testEdits[k];
+      });
+
+      Object.keys(studentTests).forEach(num => {
+        Object.keys(studentTests[num]).forEach(testId => {
+          const rec = {
+            studentNumber: num,
+            testId: testId,
+            scoreKnowledge: studentTests[num][testId]['K'],
+            scoreThinking: studentTests[num][testId]['T']
+          };
+          // Existing data from testData.scores
+          if (rec.scoreKnowledge === undefined && testData.scores[num] && testData.scores[num][testId]) rec.scoreKnowledge = testData.scores[num][testId].scoreKnowledge;
+          if (rec.scoreThinking === undefined && testData.scores[num] && testData.scores[num][testId]) rec.scoreThinking = testData.scores[num][testId].scoreThinking;
+          records.push(rec);
+        });
+      });
+
+      if (!records.length) return;
+      const btn = document.getElementById('subj-test-save-btn');
+      btn.disabled = true; btn.textContent = '保存中...';
+      google.script.run.withSuccessHandler(() => {
+        showToast('保存しました');
+        testEdits = {};
+        restoreSaveButton(btn, 'テスト保存');
+        loadSubjTests();
+      }).withFailureHandler(onFailure).saveSubjectTestScores({grade:g, className:c, subjectId:s, records:records});
+    }
+
+    function loadSubjSubmissions() {
+      const g = document.getElementById('subj-grade').value;
+      const c = document.getElementById('subj-class').value;
+      const s = currentSubjId;
+      if(!g || !c || !s) return;
+      renderSkeleton('subj-submission-table-wrapper');
+      submissionEdits = {};
+      updateSaveBtnState();
+      google.script.run.withSuccessHandler(data => {
+        submissionData = data;
+        renderSubjSubmissionTable();
+      }).withFailureHandler(onFailure).getSubjectSubmissionData({grade:g, className:c, subjectId:s});
+    }
+
+    function renderSubjSubmissionTable() {
+      if (!submissionData) return;
+      const students = submissionData.students;
+      const submissions = submissionData.submissionMaster;
+      let h = `<table class="attendance-table"><thead><tr><th class="col-fixed-name">氏名</th>`;
+      submissions.forEach(s => {
+        h += `<th>${s.submissionName}</th>`;
+      });
+      h += '</tr></thead><tbody>';
+
+      students.forEach(st => {
+        h += `<tr><td class="col-fixed-name">${st.number}.${st.name}</td>`;
+        submissions.forEach(s => {
+          const key = `${st.number}__${s.submissionId}`;
+          const val = submissionEdits[key] !== undefined ? submissionEdits[key] : (submissionData.records[st.number] && submissionData.records[st.number][s.submissionId] ? submissionData.records[st.number][s.submissionId] : '');
+          
+          let cls = 'st-noclass';
+          if (val === '○') cls = 'st-present';
+          else if (val === '△') cls = 'st-partial';
+          else if (val === '✕') cls = 'st-absent';
+
+          h += `<td>
+            <div class="cell-status ${cls}" style="cursor:pointer;" onclick="toggleSubmissionStatus('${st.number}', '${s.submissionId}', this)">${val || '-'}</div>
+          </td>`;
+        });
+        h += '</tr>';
+      });
+      h += '</tbody></table>';
+      document.getElementById('subj-submission-table-wrapper').innerHTML = h;
+    }
+
+    window.toggleSubmissionStatus = function(num, subId, el) {
+      const cur = el.textContent;
+      let next = '';
+      if (cur === '-' || cur === '') next = '○';
+      else if (cur === '○') next = '△';
+      else if (cur === '△') next = '✕';
+      else next = '○';
+      
+      el.textContent = next;
+      el.className = 'cell-status ' + (next==='○'?'st-present':(next==='△'?'st-partial':'st-absent'));
+      submissionEdits[`${num}__${subId}`] = next;
+      updateSaveBtnState();
+    };
+
+    function saveSubmissions() {
+      const g = document.getElementById('subj-grade').value;
+      const c = document.getElementById('subj-class').value;
+      const s = currentSubjId;
+      if (!g || !c) { showToast('学年・組を選択してから保存してください', true); return; }
+      if (!s) { showToast('科目を選択してから保存してください', true); return; }
+      const records = [];
+      Object.keys(submissionEdits).forEach(k => {
+        const [num, subId] = k.split('__');
+        records.push({
+          studentNumber: num,
+          submissionId: subId,
+          status: submissionEdits[k]
+        });
+      });
+
+      if (!records.length) return;
+      const btn = document.getElementById('subj-submission-save-btn');
+      btn.disabled = true; btn.textContent = '保存中...';
+      google.script.run.withSuccessHandler(() => {
+        showToast('保存しました');
+        submissionEdits = {};
+        restoreSaveButton(btn, '提出物保存');
+        loadSubjSubmissions();
+      }).withFailureHandler(onFailure).saveSubjectSubmissions({grade:g, className:c, subjectId:s, records:records});
+    }
+
+    function loadSubjSummary() {
+      const g = document.getElementById('subj-grade').value;
+      const c = document.getElementById('subj-class').value;
+      const s = currentSubjId;
+      if(!g || !c || !s) return;
+      renderSkeleton('subj-summary-table-wrapper');
+      google.script.run.withSuccessHandler(data => {
+        renderSubjSummaryTable(data);
+      }).withFailureHandler(onFailure).getSubjectSummaryData({grade:g, className:c, subjectId:s});
+    }
+
+    function renderSubjSummaryTable(data) {
+      const students = data.students;
+      const tests = data.testMaster;
+      let h = `<table class="attendance-table"><thead><tr>
+        <th rowspan="2" class="col-fixed-name">氏名</th>
+        <th colspan="3">観点① 知識技能 (テスト)</th>
+        <th colspan="3">観点② 思考判断 (テスト)</th>
+        <th colspan="3">観点③ 態度 (提出物)</th>
+      </tr><tr>
+        <th>得点率</th><th>判定</th><th>詳細</th>
+        <th>得点率</th><th>判定</th><th>詳細</th>
+        <th>得点率</th><th>判定</th><th>詳細</th>
+      </tr></thead><tbody>`;
+
+      students.forEach(st => {
+        const scores = data.scores[st.number] || {};
+        const subms = data.submissions[st.number] || {};
+
+        // Calculate Criteria 1 & 2
+        let totalK = 0, totalMaxK = 0;
+        let totalT = 0, totalMaxT = 0;
+        tests.forEach(t => {
+          if (scores[t.testId]) {
+            totalK += Number(scores[t.testId].scoreKnowledge || 0);
+            totalMaxK += Number(t.weightKnowledge || 0);
+            totalT += Number(scores[t.testId].scoreThinking || 0);
+            totalMaxT += Number(t.weightThinking || 0);
+          }
+        });
+
+        const rateK = totalMaxK > 0 ? (totalK / totalMaxK) : 0;
+        const judgeK = rateK >= 0.7 ? 'A' : (rateK >= 0.35 ? 'B' : 'C');
+        const rateT = totalMaxT > 0 ? (totalT / totalMaxT) : 0;
+        const judgeT = rateT >= 0.7 ? 'A' : (rateT >= 0.35 ? 'B' : 'C');
+
+        // Calculate Criteria 3
+        let totalS = 0, totalMaxS = 0;
+        data.submissionMaster.forEach(sm => {
+          totalMaxS += 1;
+          const status = subms[sm.submissionId];
+          if (status === '○') totalS += 1;
+          else if (status === '△') totalS += 0.5;
+        });
+        const rateS = totalMaxS > 0 ? (totalS / totalMaxS) : 0;
+        const judgeS = rateS >= 0.8 ? 'A' : (rateS >= 0.5 ? 'B' : 'C');
+
+        h += `<tr>
+          <td>${st.number}.${st.name}</td>
+          <td>${(rateK * 100).toFixed(1)}%</td><td><b class="judge-${judgeK}">${judgeK}</b></td><td style="font-size:10px;">${totalK}/${totalMaxK}</td>
+          <td>${(rateT * 100).toFixed(1)}%</td><td><b class="judge-${judgeT}">${judgeT}</b></td><td style="font-size:10px;">${totalT}/${totalMaxT}</td>
+          <td>${(rateS * 100).toFixed(1)}%</td><td><b class="judge-${judgeS}">${judgeS}</b></td><td style="font-size:10px;">${totalS}/${totalMaxS}</td>
+        </tr>`;
+      });
+
+      h += '</tbody></table>';
+      h += `<style>
+        .judge-A { color: #2563eb; }
+        .judge-B { color: #059669; }
+        .judge-C { color: #dc2626; }
+      </style>`;
+      document.getElementById('subj-summary-table-wrapper').innerHTML = h;
     }
 
     window.onload = init;
