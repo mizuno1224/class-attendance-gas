@@ -24,6 +24,12 @@
     let calSettingsState = { month: _calMonth };
     let calSettingsCache = {};
     var lastHrDaysYearlyByClass = {};
+    var hrSummaryYearlyMap = null;
+    var hrSummaryDaysForStats = null;
+    var hrSummarySemesters = null;
+    var hrSummaryStudents = null;
+    var hrSummaryStatsMap = null;
+    var hrSummarySemesterStatsMap = null;
 
     let hrState = { year: TODAY.getFullYear(), month: TODAY.getMonth()+1, semesterIdx: -1 };
     let subjState = { year: TODAY.getFullYear(), month: TODAY.getMonth()+1, semesterIdx: -1 };
@@ -72,6 +78,15 @@
       });
       document.getElementById('subj-test-save-btn').addEventListener('click', saveTestScores);
       document.getElementById('subj-submission-save-btn').addEventListener('click', saveSubmissions);
+
+      var controlsToggle = document.getElementById('app-controls-toggle');
+      if (controlsToggle) {
+        controlsToggle.addEventListener('click', function() {
+          document.body.classList.toggle('controls-hidden');
+          controlsToggle.textContent = document.body.classList.contains('controls-hidden') ? '≡ メニュー表示' : '≡ メニュー';
+          controlsToggle.title = document.body.classList.contains('controls-hidden') ? 'メニュー・操作エリアを表示' : 'メニュー・操作エリアを非表示';
+        });
+      }
     }
 
     function doSubjSubTabSwitch(tabName) {
@@ -187,6 +202,10 @@
             this.classList.add('active');
             document.getElementById('hr-sub-input').style.display = sub === 'input' ? 'block' : 'none';
             document.getElementById('hr-sub-summary').style.display = sub === 'summary' ? 'flex' : 'none';
+            if (sub === 'summary' && hrData) {
+              ensureHrDaysYearly();
+              setTimeout(applyHrSummarySubjectFilter, 100);
+            }
           });
         });
 
@@ -903,8 +922,8 @@
 
       const days = hrData.days;
       const students = hrData.students;
-      let h = '<table class="attendance-table"><thead><tr>';
-      h += '<th rowspan="2" class="col-fixed-name">氏名</th>';
+      let h = '<table class="attendance-table attendance-table-sticky"><thead><tr>';
+      h += '<th rowspan="2" class="col-fixed-name col-fixed-name-th">氏名</th>';
       days.forEach(d => {
          let thClass = 'col-day';
          if(d.date === TODAY_STR) thClass += ' today-col';
@@ -962,8 +981,9 @@
          else if (s === '出席停止') st.stop++;
       });
 
-      students.forEach(st => {
-        h += '<tr>';
+      students.forEach((st, rowIdx) => {
+        var rowClass = (rowIdx > 0 && rowIdx % 5 === 0) ? ' attendance-row-5th' : '';
+        h += '<tr class="' + rowClass + '">';
         h += `<td class="col-fixed-name name-action" data-number="${st.number}">${st.number}.${st.name}</td>`;
 
         days.forEach(d => {
@@ -1013,7 +1033,56 @@
           semesterStatsMap.push(m);
         });
       }
-      renderSummaryTable(students, statsMap, semesterStatsMap, initData.semesters);
+      hrSummaryYearlyMap = yearlyMap;
+      hrSummaryDaysForStats = daysForStats;
+      hrSummarySemesters = initData.semesters;
+      hrSummaryStudents = students;
+      hrSummaryStatsMap = statsMap;
+      hrSummarySemesterStatsMap = semesterStatsMap;
+      var sel = document.getElementById('hr-summary-subject-select');
+      if (sel) {
+        var currentVal = sel.value || '';
+        sel.innerHTML = '<option value="">全体</option>';
+        if (hrData.subjects && Object.keys(hrData.subjects).length) {
+          Object.keys(hrData.subjects).sort().forEach(function(id) {
+            var label = (hrData.subjects[id] && hrData.subjects[id].subjectName) ? hrData.subjects[id].subjectName : id;
+            sel.appendChild(new Option(label, id));
+          });
+        }
+        if (sel.querySelector('option[value="' + currentVal + '"]') || !currentVal) sel.value = currentVal || '';
+        else sel.value = '';
+        if (!sel._hrSummaryBound) {
+          sel._hrSummaryBound = true;
+          sel.addEventListener('change', applyHrSummarySubjectFilter);
+        }
+      }
+      applyHrSummarySubjectFilter();
+    }
+
+    function applyHrSummarySubjectFilter() {
+      if (!hrSummaryStudents || !hrSummarySemesters) return;
+      var sel = document.getElementById('hr-summary-subject-select');
+      var subjectId = (sel && sel.value) ? sel.value : '';
+      var yearlyMap = hrSummaryStatsMap;
+      var semesterMaps = hrSummarySemesterStatsMap;
+      var daysToUse = (hrData && hrData.daysYearly && hrData.daysYearly.length) ? hrData.daysYearly : (hrSummaryDaysForStats || []);
+      if (subjectId && hrSummaryYearlyMap && hrData.timetable) {
+        yearlyMap = {};
+        hrSummaryStudents.forEach(function(st) {
+          var yearStart = hrSummarySemesters[0] ? hrSummarySemesters[0].start : null;
+          var yearEnd = hrSummarySemesters.length ? hrSummarySemesters[hrSummarySemesters.length - 1].end : null;
+          yearlyMap[st.number] = calcStatsInRangeBySubject(st.number, hrSummaryYearlyMap, daysToUse, yearStart, yearEnd, subjectId);
+        });
+        semesterMaps = [];
+        hrSummarySemesters.forEach(function(sem) {
+          var m = {};
+          hrSummaryStudents.forEach(function(st) {
+            m[st.number] = calcStatsInRangeBySubject(st.number, hrSummaryYearlyMap, daysToUse, sem.start, sem.end, subjectId);
+          });
+          semesterMaps.push(m);
+        });
+      }
+      renderSummaryTable(hrSummaryStudents, yearlyMap, semesterMaps, hrSummarySemesters);
     }
 
     function toggleHrStatus(date, num) {
@@ -1151,43 +1220,107 @@
       return s + '～' + e;
     }
 
+    /** validPeriods を配列に正規化（文字列 "1,2,3" の場合は分割） */
+    function normalizeValidPeriods(vp) {
+      if (!vp) return null;
+      if (Array.isArray(vp)) return vp.length ? vp : null;
+      var s = String(vp).replace(/[０-９]/g, function(ch) { return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); });
+      var arr = s.split(',').map(function(n) { return Number(n.trim()); }).filter(function(n) { return !isNaN(n); });
+      return arr.length ? arr : null;
+    }
+
+    /** 日付オブジェクトから YYYY-MM-DD を取得 */
+    function toDateKey(val) {
+      if (!val) return '';
+      var s = String(val);
+      if (s.length >= 10 && s.charAt(4) === '-' && s.charAt(7) === '-') return s.slice(0, 10);
+      try { var d = new Date(s); if (!isNaN(d.getTime())) return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); } catch (e) {}
+      return s.slice(0, 10);
+    }
+
+    /** 指定科目・期間でその科目の時限に該当する欠席・遅刻・早退等のみ集計（時間割に基づく） */
+    function calcStatsInRangeBySubject(num, attMap, days, start, end, subjectId) {
+      if (!hrData.timetable) return { absent:0, late:0, early:0, mourn:0, inf:0, infection:0, stop:0 };
+      var res = { absent:0, late:0, early:0, mourn:0, inf:0, infection:0, stop:0 };
+      Object.keys(attMap).forEach(function(k) {
+        if (!k.endsWith('__' + num)) return;
+        var rec = attMap[k];
+        var dateStr = toDateKey(rec.date);
+        if (!dateStr || dateStr < start || dateStr > end) return;
+        var dow = new Date(dateStr + 'T12:00:00').getDay();
+        var subjectPeriods = hrData.timetable
+          .filter(function(t) { return Number(t.weekday) === dow && String(t.subjectId) === String(subjectId); })
+          .map(function(t) { return Number(t.period); });
+        var dayInfo = days && days.length ? days.find(function(d) { return toDateKey(d.date) === dateStr; }) : null;
+        if (dayInfo) {
+          if (dayInfo.isNoClassDay || dayInfo.isSchoolday === false) return;
+          var validPeriods = normalizeValidPeriods(dayInfo.validPeriods);
+          if (validPeriods && validPeriods.length) subjectPeriods = subjectPeriods.filter(function(p) { return validPeriods.indexOf(p) !== -1; });
+        }
+        if (!subjectPeriods.length) return;
+        var s = rec.status;
+        if (['欠席','忌引','公欠','感染症','出席停止'].indexOf(s) !== -1) {
+          if (s === '欠席') res.absent++;
+          else if (s === '忌引') res.mourn++;
+          else if (s === '公欠') res.inf++;
+          else if (s === '感染症') res.infection++;
+          else if (s === '出席停止') res.stop++;
+        } else if (s === '遅刻' || s === '早退' || s === '遅刻早退') {
+          var pList = String(rec.periods || '').split(',').map(Number).filter(Boolean);
+          var hit = pList.some(function(p) { return subjectPeriods.indexOf(p) !== -1; });
+          if (hit) {
+            if (s === '遅刻') res.late++;
+            else if (s === '早退') res.early++;
+            else { res.late++; res.early++; }
+          }
+        }
+      });
+      return res;
+    }
+
     function renderSummaryTable(students, yearlyStatsMap, semesterStatsMap, semesters) {
       const wrapper = document.getElementById('hr-summary-table-wrapper');
       if (!wrapper) return;
-      if (!students || !students.length) { wrapper.innerHTML = '<p style="padding:8px; color:#666;">生徒がいません。</p>'; return; }
+      if (!students || !students.length) {
+        wrapper.classList.remove('summary-table-wrapper-inner');
+        wrapper.innerHTML = '<p style="padding:8px; color:#666;">生徒がいません。</p>';
+        return;
+      }
+      wrapper.classList.add('summary-table-wrapper-inner');
       var yearStart = (semesters && semesters.length) ? semesters[0].start : null;
       var yearEnd = (semesters && semesters.length) ? semesters[semesters.length - 1].end : null;
       var statLabels = ['欠', '遅', '早', '忌', '感', '公', '停'];
       var h = '<table class="summary-table"><thead><tr>';
-      h += '<th rowspan="2" class="summary-name">氏名</th>';
-      h += '<th colspan="7" class="summary-period-head">年度通算<br><span class="summary-daterange">' + formatDateRange(yearStart, yearEnd) + '</span></th>';
-      (semesters || []).forEach(function(sem) {
-        h += '<th colspan="7" class="summary-period-head">' + (sem.name || '') + '<br><span class="summary-daterange">' + formatDateRange(sem.start, sem.end) + '</span></th>';
+      h += '<th rowspan="2" class="summary-name summary-th-sticky">氏名</th>';
+      h += '<th colspan="7" class="summary-period-head summary-th-semester-start">年度通算<br><span class="summary-daterange">' + formatDateRange(yearStart, yearEnd) + '</span></th>';
+      (semesters || []).forEach(function(sem, idx) {
+        h += '<th colspan="7" class="summary-period-head' + (idx > 0 ? ' summary-th-semester-start' : '') + '">' + (sem.name || '') + '<br><span class="summary-daterange">' + formatDateRange(sem.start, sem.end) + '</span></th>';
       });
       h += '</tr><tr class="summary-subhead">';
-      h += '<th class="summary-th-stat">欠</th><th class="summary-th-stat">遅</th><th class="summary-th-stat">早</th><th class="summary-th-stat">忌</th><th class="summary-th-stat">感</th><th class="summary-th-stat">公</th><th class="summary-th-stat">停</th>';
+      h += '<th class="summary-th-stat summary-th-semester-start">欠</th><th class="summary-th-stat">遅</th><th class="summary-th-stat">早</th><th class="summary-th-stat">忌</th><th class="summary-th-stat">感</th><th class="summary-th-stat">公</th><th class="summary-th-stat">停</th>';
       (semesters || []).forEach(function() {
-        statLabels.forEach(function(lbl) { h += '<th class="summary-th-stat">' + lbl + '</th>'; });
+        statLabels.forEach(function(lbl, i) { h += '<th class="summary-th-stat' + (i === 0 ? ' summary-th-semester-start' : '') + '">' + lbl + '</th>'; });
       });
       h += '</tr></thead><tbody>';
-      function cellHtml(val) {
+      function cellHtml(val, isSemesterStart) {
         var n = val || 0;
-        var cls = 'summary-cell' + (n !== 0 ? ' summary-cell-emphasis' : '');
+        var cls = 'summary-cell' + (n !== 0 ? ' summary-cell-emphasis' : '') + (isSemesterStart ? ' summary-cell-semester-start' : '');
         return '<td class="' + cls + '">' + n + '</td>';
       }
-      students.forEach(function(st) {
+      students.forEach(function(st, rowIdx) {
         var num = st.number;
         var y = yearlyStatsMap[num] || {};
-        h += '<tr><td class="summary-name">' + st.number + '.' + (st.name || '') + '</td>';
-        h += cellHtml(y.absent) + cellHtml(y.late) + cellHtml(y.early) + cellHtml(y.mourn) + cellHtml(y.infection) + cellHtml(y.inf) + cellHtml(y.stop);
-        (semesterStatsMap || []).forEach(function(semMap) {
+        var rowClass = (rowIdx > 0 && rowIdx % 5 === 0) ? ' summary-row-5th' : '';
+        h += '<tr class="' + rowClass + '"><td class="summary-name">' + st.number + '.' + (st.name || '') + '</td>';
+        h += cellHtml(y.absent, true) + cellHtml(y.late) + cellHtml(y.early) + cellHtml(y.mourn) + cellHtml(y.infection) + cellHtml(y.inf) + cellHtml(y.stop);
+        (semesterStatsMap || []).forEach(function(semMap, semIdx) {
           var s = (semMap && semMap[num]) || {};
-          h += cellHtml(s.absent) + cellHtml(s.late) + cellHtml(s.early) + cellHtml(s.mourn) + cellHtml(s.infection) + cellHtml(s.inf) + cellHtml(s.stop);
+          h += cellHtml(s.absent, true) + cellHtml(s.late) + cellHtml(s.early) + cellHtml(s.mourn) + cellHtml(s.infection) + cellHtml(s.inf) + cellHtml(s.stop);
         });
         h += '</tr>';
       });
       h += '</tbody></table>';
-      wrapper.innerHTML = h;
+      wrapper.innerHTML = '<div class="summary-table-scroll">' + h + '</div>';
     }
 
     function calcSubjCounts(num, attMap, daysForYear) {

@@ -62,7 +62,7 @@ git add .
 ### コミット
 
 ```bash
-git commit -m "コミットメッセージ"
+git commit -m "修正"
 ```
 
 ### リモートへプッシュ
