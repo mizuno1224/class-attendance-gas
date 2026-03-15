@@ -87,6 +87,16 @@
           controlsToggle.title = document.body.classList.contains('controls-hidden') ? 'メニュー・操作エリアを表示' : 'メニュー・操作エリアを非表示';
         });
       }
+
+      // ★改善: Escキーでモーダルを閉じる
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+          var overlay = document.getElementById('modal-overlay');
+          if (overlay && overlay.style.display === 'flex') {
+            closeModal();
+          }
+        }
+      });
     }
 
     function doSubjSubTabSwitch(tabName) {
@@ -286,7 +296,8 @@
       const btnHr = document.getElementById('hr-save-btn');
       if (btnHr) {
         btnHr.disabled = !hasHrDiff;
-        btnHr.textContent = '保存';
+        btnHr.textContent = hasHrDiff ? '保存 (' + Object.keys(hrEdits).length + '件)' : '保存';
+        btnHr.classList.toggle('btn-has-changes', hasHrDiff);
       }
 
       const hasSubjDiff = Object.keys(subjEdits).length > 0;
@@ -294,7 +305,8 @@
       if (btnSubj) {
         const canSaveSubj = isSubjGradeClassSelected() && currentSubjId;
         btnSubj.disabled = !hasSubjDiff || !canSaveSubj;
-        btnSubj.textContent = '保存';
+        btnSubj.textContent = hasSubjDiff ? '保存 (' + Object.keys(subjEdits).length + '件)' : '保存';
+        btnSubj.classList.toggle('btn-has-changes', hasSubjDiff);
       }
 
       const hasTestDiff = Object.keys(testEdits).length > 0;
@@ -302,6 +314,7 @@
       if (btnTest) {
         btnTest.disabled = !hasTestDiff;
         btnTest.textContent = 'テスト保存';
+        btnTest.classList.toggle('btn-has-changes', hasTestDiff);
       }
 
       const hasSubmDiff = Object.keys(submissionEdits).length > 0;
@@ -309,12 +322,14 @@
       if (btnSubm) {
         btnSubm.disabled = !hasSubmDiff;
         btnSubm.textContent = '提出物保存';
+        btnSubm.classList.toggle('btn-has-changes', hasSubmDiff);
       }
 
       const btnCal = document.getElementById('cal-bulk-save-btn');
       if (btnCal) {
         btnCal.disabled = !calEdits;
         btnCal.textContent = '一括保存';
+        btnCal.classList.toggle('btn-has-changes', calEdits);
       }
     }
 
@@ -958,6 +973,9 @@
       var yearEnd = (initData.semesters && initData.semesters.length > 0) ? initData.semesters[initData.semesters.length - 1].end : null;
       var sourceAtt = (hrData.attendanceYearly && Array.isArray(hrData.attendanceYearly)) ? hrData.attendanceYearly : hrData.attendance;
       var daysForStats = (hrData.daysYearly && Array.isArray(hrData.daysYearly) && hrData.daysYearly.length) ? hrData.daysYearly : hrData.days;
+      // ★改善: days.find() の O(n) 検索を Map 化して高速化
+      var daysForStatsMap = {};
+      daysForStats.forEach(function(d) { daysForStatsMap[d.date] = d; });
       var yearlyMap = {};
       sourceAtt.forEach(function(r) {
         var ds = String(r.date).slice(0, 10);
@@ -967,7 +985,7 @@
       Object.keys(yearlyMap).forEach(key => {
          const [date, num] = key.split('__');
          if (!statsMap[num]) return;
-         const dayInfo = daysForStats.find(d => d.date === date);
+         const dayInfo = daysForStatsMap[date];
          if (dayInfo && !dayInfo.isSchoolday) return;
          const s = yearlyMap[key].status;
          const st = statsMap[num];
@@ -1014,6 +1032,8 @@
             </div>`;
           }
           if (d.date === TODAY_STR) tdClass = 'today-col';
+          // ★改善: 編集済みセルにハイライト
+          if (hrEdits[key]) tdClass += ' cell-edited';
           h += `<td class="col-day ${tdClass}">${inner}</td>`;
         });
         h += '</tr>';
@@ -1170,13 +1190,21 @@
       document.getElementById('modal-overlay').style.display = 'flex';
     }
 
+    // ★改善: days配列をMapに変換するヘルパー（O(n)検索を排除）
+    function buildDaysMap_(days) {
+      var m = {};
+      if (days && days.length) days.forEach(function(d) { m[String(d.date).slice(0,10)] = d; });
+      return m;
+    }
+
     function calcStats(num, attMap, daysForYear) {
       var days = (daysForYear && daysForYear.length) ? daysForYear : (hrData.days || []);
+      var dMap = buildDaysMap_(days);
       let res = { absent:0, late:0, early:0, mourn:0, inf:0, infection:0, stop:0 };
       Object.keys(attMap).forEach(k => {
          if (!k.endsWith('__'+num)) return;
          const date = k.split('__')[0];
-         const dayInfo = days.find(d => d.date === date);
+         const dayInfo = dMap[date];
          if (dayInfo && !dayInfo.isSchoolday) return;
          const s = attMap[k].status;
          if (s === '欠席') res.absent++;
@@ -1193,12 +1221,13 @@
 
     function calcStatsInRange(num, attMap, days, start, end) {
       if (!days || !days.length) return { absent:0, late:0, early:0, mourn:0, inf:0, infection:0, stop:0 };
+      var dMap = buildDaysMap_(days);
       let res = { absent:0, late:0, early:0, mourn:0, inf:0, infection:0, stop:0 };
       Object.keys(attMap).forEach(k => {
         if (!k.endsWith('__' + num)) return;
         const date = k.split('__')[0].slice(0, 10);
         if (date < start || date > end) return;
-        const dayInfo = days.find(d => String(d.date).slice(0, 10) === date);
+        const dayInfo = dMap[date];
         if (dayInfo && !dayInfo.isSchoolday) return;
         const s = attMap[k].status;
         if (s === '欠席') res.absent++;
@@ -1325,6 +1354,7 @@
 
     function calcSubjCounts(num, attMap, daysForYear) {
       var days = (daysForYear && daysForYear.length) ? daysForYear : (hrData.days || []);
+      var dMap = buildDaysMap_(days);
       const counts = {};
       Object.keys(attMap).forEach(k => {
          if (!k.endsWith('__'+num)) return;
@@ -1332,7 +1362,7 @@
          const status = rec.status;
          if (!status || status === '出席') return;
          const dow = new Date(rec.date).getDay();
-         const dayInfo = days.find(d => d.date === rec.date);
+         const dayInfo = dMap[String(rec.date).slice(0,10)];
          if (!dayInfo || dayInfo.isNoClassDay) return;
          const validPeriods = dayInfo.validPeriods;
          const classes = hrData.timetable.filter(t => t.weekday === dow);
@@ -1420,6 +1450,10 @@
       }
     }
     function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
+    // ★改善: オーバーレイ背景クリックでモーダルを閉じる
+    document.getElementById('modal-overlay').addEventListener('click', function(e) {
+      if (e.target === this) closeModal();
+    });
     
     function selectModalOpt(val) {
        if (val === '出席') {
@@ -1937,10 +1971,17 @@
        h += '</tr></thead><tbody>';
        
        students.forEach(st => {
-          h += '<tr>';
-          h += `<td class="col-fixed-name name-action" data-number="${st.number}">${st.number}.${st.name}</td>`;
           const count = subjData.totalAbsentMap[st.number]||0;
           const units = subjData.subject ? subjData.subject.units : 0;
+          // ★改善: 欠課限度に近い生徒の行に警告クラス
+          let rowWarnClass = '';
+          if (units > 0) {
+            var limCheck = getAbsenceLimit(units);
+            if (count > limCheck.maxAllowed) rowWarnClass = ' row-warn-critical';
+            else if (count > limCheck.maxAllowed - 5) rowWarnClass = ' row-warn-approaching';
+          }
+          h += `<tr class="${rowWarnClass}">`;
+          h += `<td class="col-fixed-name name-action" data-number="${st.number}">${st.number}.${st.name}</td>`;
           let remainStr = '';
           let warnClass = '';
           if (units > 0) {
@@ -1961,10 +2002,12 @@
              let lbl='出', cls='st-present';
              if (val==='欠課'||val==='欠席') { lbl='欠'; cls='st-absent'; }
              else if (val==='公欠') { lbl='公'; cls='st-inf'; }
-             
+
              let tdClass = '';
              let inner = '';
              if (d.date === TODAY_STR) tdClass = 'today-col';
+             // ★改善: 編集済みセルにハイライト
+             if (subjEdits[key]) tdClass += ' cell-edited';
              if (d.isNoClassDay || !d.isSchoolday) {
                lbl='-'; cls='st-noclass';
                inner = `<div class="cell-wrapper"><div class="cell-status st-noclass">-</div></div>`;

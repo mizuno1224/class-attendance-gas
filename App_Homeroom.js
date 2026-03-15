@@ -96,7 +96,7 @@ function getHomeroomDataLogic_(allData, grade, className, year, month) {
   };
 }
 
-// 年度累積用カレンダー（別APIで遅延取得し初回表示を軽量化）
+// ★改善: 年度累積用カレンダーを generateCalendarDataForRange_ で一括取得（祝日API呼出1回）
 function getHomeroomYearlyCalendar(grade, className) {
   var ss = SpreadsheetApp.openById(SS_ID);
   var requiredSheets = ['calendar', 'semesters'];
@@ -108,19 +108,7 @@ function getHomeroomYearlyCalendar(grade, className) {
   if (semesters.length > 0) {
     var yearStart = semesters[0].start;
     var yearEnd = semesters[semesters.length - 1].end;
-    var startParts = yearStart.split('-').map(Number);
-    var endParts = yearEnd.split('-').map(Number);
-    var y1 = startParts[0], m1 = startParts[1];
-    var y2 = endParts[0], m2 = endParts[1];
-    var currY = y1, currM = m1;
-    while (currY < y2 || (currY === y2 && currM <= m2)) {
-      daysYearly = daysYearly.concat(generateCalendarData_(currY, currM, allData['calendar'] || []));
-      if (currM === 12) { currY++; currM = 1; } else { currM++; }
-    }
-    daysYearly = daysYearly.filter(function(d) {
-      var ds = String(d.date).slice(0, 10);
-      return ds >= yearStart && ds <= yearEnd;
-    });
+    daysYearly = generateCalendarDataForRange_(yearStart, yearEnd, allData['calendar'] || []);
   }
   return { daysYearly: daysYearly };
 }

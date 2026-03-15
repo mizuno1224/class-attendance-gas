@@ -5,7 +5,7 @@
 function getAllSheetData_(ss, targetSheets) {
   const data = {};
   const sheetsToLoad = targetSheets || SHEET_NAMES;
-  
+
   sheetsToLoad.forEach(name => {
     const sh = ss.getSheetByName(name);
     if (sh) {
@@ -32,15 +32,25 @@ function getAllSheetData_(ss, targetSheets) {
   return data;
 }
 
+// ★改善: SpreadsheetApp.openById の呼出をキャッシュして高速化
+var _cachedTz = null;
+function getSpreadsheetTz_() {
+  if (_cachedTz) return _cachedTz;
+  try {
+    _cachedTz = SpreadsheetApp.openById(SS_ID).getSpreadsheetTimeZone();
+  } catch (e) {
+    _cachedTz = Session.getScriptTimeZone();
+  }
+  return _cachedTz;
+}
+
 function dateToKey_(d) {
   if (!d) return "";
   if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10);
   const dt = new Date(d);
   if (isNaN(dt.getTime())) return String(d);
   try {
-    const ss = SpreadsheetApp.openById(SS_ID);
-    const tz = ss.getSpreadsheetTimeZone();
-    return Utilities.formatDate(dt, tz, 'yyyy-MM-dd');
+    return Utilities.formatDate(dt, getSpreadsheetTz_(), 'yyyy-MM-dd');
   } catch (e) {
     const y = dt.getFullYear();
     const m = ('0' + (dt.getMonth() + 1)).slice(-2);
@@ -64,7 +74,7 @@ function saveAttendanceCommon_(sheetName, payload, headerList) {
     const lastRow = sh.getLastRow();
     const range = sh.getDataRange();
     const values = range.getValues();
-    
+
     // ヘッダー確認・作成
     let headers = (values.length > 0 && values[0]) ? values[0] : null;
     if (lastRow === 0 || !headers || headers.length === 0) {
@@ -82,50 +92,51 @@ function saveAttendanceCommon_(sheetName, payload, headerList) {
       });
     });
 
-    // 同一キーの既存行を除外するためのキー集合（今回保存するレコード）
-    const payloadKeys = new Set();
-    records.forEach(rec => {
-      const d = dateToKey_(rec.date);
-      if (sheetName === 'attendance_hr') {
-        payloadKeys.add(d + '__' + String(rec.grade) + '__' + String(rec.class) + '__' + String(rec.number));
-      } else if (sheetName === 'attendance_subject') {
-        payloadKeys.add(d + '__' + String(rec.subjectId) + '__' + String(rec.grade) + '__' + String(rec.class) + '__' + String(rec.period) + '__' + String(rec.number));
-      } else if (sheetName === 'test_scores') {
-        payloadKeys.add(String(rec.year) + '__' + String(rec.subjectId) + '__' + String(rec.grade) + '__' + String(rec.class) + '__' + String(rec.testId) + '__' + String(rec.studentNumber));
-      } else if (sheetName === 'submissions') {
-        payloadKeys.add(String(rec.year) + '__' + String(rec.subjectId) + '__' + String(rec.grade) + '__' + String(rec.class) + '__' + String(rec.submissionId) + '__' + String(rec.studentNumber));
-      }
-    });
-
+    // ★改善: キー生成をヘルパー関数に統一し、Mapで高速化
     const idx = {};
     headers.forEach((h, i) => { idx[h] = i; });
 
-    function rowToKey_(row) {
-      const d = dateToKey_(row[idx.date]);
+    function buildKey_(rec, isObj) {
+      var d, vals;
+      if (isObj) {
+        d = dateToKey_(rec.date || rec[idx.date]);
+        vals = rec;
+      } else {
+        d = dateToKey_(rec[idx.date]);
+        vals = null;
+      }
+      function v(field) {
+        if (isObj) return String(vals[field] || '');
+        return String(rec[idx[field]] || '');
+      }
       if (sheetName === 'attendance_hr') {
-        return d + '__' + String(row[idx.grade] || '') + '__' + String(row[idx.class] || '') + '__' + String(row[idx.number] || '');
+        return d + '__' + v('grade') + '__' + v('class') + '__' + v('number');
       }
       if (sheetName === 'attendance_subject') {
-        return d + '__' + String(row[idx.subjectId] || '') + '__' + String(row[idx.grade] || '') + '__' + String(row[idx.class] || '') + '__' + String(row[idx.period] || '') + '__' + String(row[idx.number] || '');
+        return d + '__' + v('subjectId') + '__' + v('grade') + '__' + v('class') + '__' + v('period') + '__' + v('number');
       }
       if (sheetName === 'test_scores') {
-        return String(row[idx.year] || '') + '__' + String(row[idx.subjectId] || '') + '__' + String(row[idx.grade] || '') + '__' + String(row[idx.class] || '') + '__' + String(row[idx.testId] || '') + '__' + String(row[idx.studentNumber] || '');
+        return v('year') + '__' + v('subjectId') + '__' + v('grade') + '__' + v('class') + '__' + v('testId') + '__' + v('studentNumber');
       }
       if (sheetName === 'submissions') {
-        return String(row[idx.year] || '') + '__' + String(row[idx.subjectId] || '') + '__' + String(row[idx.grade] || '') + '__' + String(row[idx.class] || '') + '__' + String(row[idx.submissionId] || '') + '__' + String(row[idx.studentNumber] || '');
+        return v('year') + '__' + v('subjectId') + '__' + v('grade') + '__' + v('class') + '__' + v('submissionId') + '__' + v('studentNumber');
       }
       return '';
     }
 
+    // 今回保存するレコードのキー集合
+    const payloadKeys = new Set();
+    records.forEach(rec => payloadKeys.add(buildKey_(rec, true)));
+
     const dataRows = values.length > 1 ? values.slice(1) : [];
-    const filteredExisting = dataRows.filter(row => !payloadKeys.has(rowToKey_(row)));
+    const filteredExisting = dataRows.filter(row => !payloadKeys.has(buildKey_(row, false)));
     const allDataRows = filteredExisting.concat(toAppend);
 
     const newLastRow = 1 + allDataRows.length;
     sh.getRange(1, 1, newLastRow, headers.length).setValues([headers].concat(allDataRows));
     // 行数が減った場合に末尾の古い行をクリア
     if (lastRow > newLastRow) {
-      sh.getRange(newLastRow + 1, 1, lastRow, sh.getLastColumn()).clearContent();
+      sh.getRange(newLastRow + 1, 1, lastRow - newLastRow, headers.length).clearContent();
     }
 
     const lastUpdated = new Date().toISOString();
@@ -139,26 +150,42 @@ function saveAttendanceCommon_(sheetName, payload, headerList) {
   }
 }
 
-// ★修正: 祝日カレンダーIDを明示し、取得エラー時の対策を追加
+// ★改善: CacheService で祝日をキャッシュ（6時間有効、API呼出を大幅削減）
 function getHolidaysMap_(start, end) {
+  var startKey = Utilities.formatDate(start, getSpreadsheetTz_(), 'yyyy-MM');
+  var endKey = Utilities.formatDate(end, getSpreadsheetTz_(), 'yyyy-MM');
+  var cacheKey = 'holidays_' + startKey + '_' + endKey;
+
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get(cacheKey);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch (e) { /* キャッシュ破損時は再取得 */ }
+  }
+
   const map = {};
-  // 日本の祝日カレンダーID
   const calId = 'ja.japanese#holiday@group.v.calendar.google.com';
-  
+
   try {
     const cal = CalendarApp.getCalendarById(calId);
     if (!cal) {
-      console.warn(`Calendar ID not found: ${calId}`);
+      console.warn('Calendar ID not found: ' + calId);
       return map;
     }
     const events = cal.getEvents(start, end);
     events.forEach(e => {
-      // タイムゾーンをスクリプトに合わせてフォーマット
       const k = Utilities.formatDate(e.getStartTime(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
       map[k] = true;
     });
   } catch (e) {
     console.warn('Holiday calendar fetch failed: ' + e.message);
   }
+
+  // 6時間キャッシュ (21600秒)
+  try {
+    cache.put(cacheKey, JSON.stringify(map), 21600);
+  } catch (e) { /* キャッシュ保存失敗は無視 */ }
+
   return map;
 }

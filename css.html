@@ -509,16 +509,7 @@
       color: #333;
     }
 
-    /* Stripe */
-    tbody tr:nth-child(even) td {
-      background-color: #e5e7eb;
-    }
-
-    tbody tr:nth-child(even) .col-fixed-name,
-    tbody tr:nth-child(even) .col-fixed-stat,
-    tbody tr:nth-child(even) .col-fixed-date {
-      background-color: #e5e7eb;
-    }
+    /* Stripe - 下部で再定義 */
 
     .col-fixed-name {
       position: sticky;
@@ -1120,5 +1111,79 @@
     }
     .toast.error {
       background: #dc2626;
+    }
+
+    /* ★改善: 編集済みセルのハイライト */
+    td.cell-edited {
+      background-color: #fef9c3 !important;
+      box-shadow: inset 0 0 0 2px #f59e0b;
+    }
+    td.cell-edited .cell-status {
+      font-weight: 900;
+    }
+
+    /* ★改善: 欠課限度警告行 */
+    tr.row-warn-approaching td {
+      background-color: #fff7ed !important;
+    }
+    tr.row-warn-approaching td.col-fixed-name,
+    tr.row-warn-approaching td.col-fixed-stat {
+      background-color: #fff7ed !important;
+    }
+    tr.row-warn-critical td {
+      background-color: #fef2f2 !important;
+    }
+    tr.row-warn-critical td.col-fixed-name,
+    tr.row-warn-critical td.col-fixed-stat {
+      background-color: #fef2f2 !important;
+    }
+    tr.row-warn-critical td.col-fixed-name {
+      color: #dc2626;
+      font-weight: 700;
+    }
+
+    /* ★改善: 5行区切りの強化 */
+    .attendance-table tbody tr.attendance-row-5th td {
+      border-top: 2.5px solid #1e293b;
+    }
+    .summary-table tbody tr.summary-row-5th td {
+      border-top: 2.5px solid #1e293b;
+    }
+
+    /* ★改善: ストライプの視認性向上 */
+    tbody tr:nth-child(odd) td {
+      background-color: #ffffff;
+    }
+    tbody tr:nth-child(even) td {
+      background-color: #f1f5f9;
+    }
+    tbody tr:nth-child(odd) .col-fixed-name,
+    tbody tr:nth-child(odd) .col-fixed-stat,
+    tbody tr:nth-child(odd) .col-fixed-date {
+      background-color: #ffffff;
+    }
+    tbody tr:nth-child(even) .col-fixed-name,
+    tbody tr:nth-child(even) .col-fixed-stat,
+    tbody tr:nth-child(even) .col-fixed-date {
+      background-color: #f1f5f9;
+    }
+
+    /* ★改善: 未保存変更のインジケーター（保存ボタン横） */
+    .btn.btn-has-changes {
+      animation: pulse-save 1.5s infinite;
+      background: #f59e0b;
+    }
+    @keyframes pulse-save {
+      0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5); }
+      70% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+    }
+
+    /* ★改善: 欠席セルの背景色強調 */
+    td:has(.st-absent) {
+      background-color: #fef2f2 !important;
+    }
+    td:has(.st-partial) {
+      background-color: #fffbeb !important;
     }
 </style>
